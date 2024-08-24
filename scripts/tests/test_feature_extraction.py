@@ -20,7 +20,7 @@ class TestFeatureVectorExtractorWithRealFiles(unittest.TestCase):
     def test_feature_vector_extraction(self):
         self.extractor.run()
 
-        self.extractor.writer.table_synced_access(
+        res = self.extractor.writer.table_synced_access(
             lambda table: (
                 # some sanity checks on the parsed files
                 self.assertEqual(table.num_rows, 4),
@@ -30,9 +30,11 @@ class TestFeatureVectorExtractorWithRealFiles(unittest.TestCase):
                 self.assertEqual(pc.max(table[Constants.FLAT_INT_VARS]).as_py(), 65),
                 self.assertEqual(pc.count(table[Constants.ANNOTATION_HISTOGRAM]).as_py(), 4),
                 self.assertAlmostEqual(pc.stddev(table[Constants.DOMAIN_WIDTHS][1].as_py()).as_py(), 8.48, 2),
-                print(table.schema)
+                table.schema
             )
         )
+
+        print(res[7])
 
     def tearDown(self):
         if self.parquet_file.exists():

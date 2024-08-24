@@ -1,3 +1,5 @@
+import os
+import tempfile
 from pathlib import Path
 from minizinc_wrapper import MinizincWrapper
 from parquet import ParquetReadWriter
@@ -20,12 +22,20 @@ class FeatureVectorExtractor(MinizincWrapper):
 
     def run(self, args=None):
         for file in self.input_files:
-            fznfile = f"{".".join(file.as_posix().split(".")[:-1])}.fzn" # todo move to own output folder, then we ll not have to unlink it.
-            args = f'--no-optimize --feature-vector --output-fzn-to-file {fznfile} "{file}" --json-stream --compile'
-            output_lines = super().run(args)
+            #fd, fznfile = tempfile.mkstemp(suffix='.fzn')
+            #os.close(fd)
+            #fznfile = Path(fznfile).resolve().as_posix()
+            fznfile = f"{".".join(file.as_posix().split(".")[:-1])}.fzn" # todo move to temp folder, then we ll not have to unlink it.
+            args = f'--no-optimize --feature-vector --no-output-ozn --output-fzn-to-file {fznfile} "{file}" --json-stream --compile'
+            ret_code, output_lines = super().run(args)
+
+            if ret_code != 0:
+                raise Exception(f"Feature Extraction failed for file {fznfile}.")
+
             df = Helpers.json_to_normalized_feature_vector_dataframe("\n".join(output_lines))
 
             with open(fznfile, 'r') as f:
+                df[Constants.PROBLEM_ID] = fznfile.split("/")[-1]  # todo pass name or id in constructor of class
                 df[Constants.FLAT_ZINC] = f.read()
             Path(fznfile).resolve().unlink()
 

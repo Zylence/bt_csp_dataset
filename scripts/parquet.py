@@ -1,4 +1,4 @@
-from typing import Callable
+from typing import Callable, Any
 
 import pyarrow.parquet as pq
 from threading import Lock
@@ -36,7 +36,7 @@ class ParquetReader:
         self.table = None
 
     def load_table(self, filename: str):
-        self.table = pq.read_table('saved_table.parquet', schema=self.schema)
+        self.table = pq.read_table(filename, schema=self.schema)
 
 
 """
@@ -55,6 +55,6 @@ class ParquetReadWriter(ParquetWriter, ParquetReader):
     do not use threading / mp in the cb
     do not nest cbs
     """
-    def table_synced_access(self, cb: Callable[[pa.Table], None]):
+    def table_synced_access(self, cb: Callable[[pa.Table], Any]):
         with self.lock:
-            cb(self.table)
+            return cb(self.table)

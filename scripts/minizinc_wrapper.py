@@ -7,7 +7,7 @@ Invokes the minizinc.exe with arguments and captures the output.
 class MinizincWrapper:
 
     minizinc_executable = Path("../../libminizinc/out/build/x64-Debug/minizinc.exe").resolve()
-    def run(self, args) -> list[str]:
+    def run(self, args) -> (int, list[str]):
 
         command = f"{MinizincWrapper.minizinc_executable} {args}"
         process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True, text=True,
@@ -15,6 +15,6 @@ class MinizincWrapper:
         stdout, stderr = process.communicate()
 
         if process.returncode != 0:
-            raise Exception(f"Command failed with error: {stdout.strip(), stderr.strip()}")
+            print(f"Command failed with error: {stdout.strip(), stderr.strip()}")
 
-        return stdout.strip().split('\n')
+        return process.returncode, stdout.strip().split('\n')

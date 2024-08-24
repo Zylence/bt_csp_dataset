@@ -7,6 +7,7 @@ from referencing import jsonschema
 
 
 class Constants:
+    PROBLEM_ID = "problemId"
     FEATURE_VECTOR = "feature_vector"
 
     FLAT_BOOL_VARS = "flatBoolVars"
@@ -34,10 +35,14 @@ class Constants:
     BACKTRACKS = "backtracks"
     INSTANCE_RESULTS = "instanceResults"
 
+    SOLVER_STATISTICS = "statistics"
+    INSTANCE_PERMUTATION = "instancePermutation"
+
 
 class Schemas:
     class Parquet:
         feature_vector: pa.Schema = pa.schema([
+            pa.field(Constants.PROBLEM_ID, pa.string(), False),
             pa.field(Constants.FLAT_BOOL_VARS, pa.int32(), False),
             pa.field(Constants.FLAT_INT_VARS, pa.int32(), False),
             pa.field(Constants.FLAT_SET_VARS, pa.int32(), False),
@@ -69,6 +74,14 @@ class Schemas:
         ])
 
         feature_vector_instance_results: pa.Schema = pa.unify_schemas([feature_vector, instance_results])
+
+        instances: pa.Schema = pa.schema(
+            [
+                pa.field(Constants.PROBLEM_ID, pa.string(), False),
+                pa.field(Constants.INSTANCE_PERMUTATION, pa.list_(pa.string()), False),
+                pa.field(Constants.FLAT_ZINC, pa.string(), False)
+            ]
+        )
 
     class JSON:
         feature_vector: Mapping[str, Any] = {
@@ -180,6 +193,36 @@ class Schemas:
             ]
         }
 
+        solver_statistics = {
+            "type": "object",
+            "properties": {
+                "type": {
+                    "type": "string",
+                    "enum": ["statistics"]  # Ensure that the "type" field must be "statistics"
+                },
+                "statistics": {
+                    "type": "object",
+                    "properties": {
+                        "initTime": {"type": "number"},
+                        "solveTime": {"type": "number"},
+                        "solutions": {"type": "integer"},
+                        "variables": {"type": "integer"},
+                        "propagators": {"type": "integer"},
+                        "propagations": {"type": "integer"},
+                        "nodes": {"type": "integer"},
+                        "failures": {"type": "integer"},
+                        "restarts": {"type": "integer"},
+                        "peakDepth": {"type": "integer"},
+                        "nSolutions": {"type": "integer"}
+                    },
+                    "required": ["solutions"],  # At least "solutions" must be present
+                    "additionalProperties": False  # No properties other than those specified are allowed
+                }
+            },
+            "required": ["type", "statistics"],
+            "additionalProperties": False
+        }
+
 
 class Helpers:
 
@@ -220,3 +263,8 @@ class Helpers:
         return df
 
 
+    @staticmethod
+    def json_to_solution_statistics_dataframe(maybe_json: str) -> pd.DataFrame:
+        js = Helpers.parse_json_validated(maybe_json, Schemas.JSON.solver_statistics)
+        df = pd.DataFrame([js[Constants.SOLVER_STATISTICS]])
+        return df
