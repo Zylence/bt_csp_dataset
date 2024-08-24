@@ -1,7 +1,6 @@
 import unittest
 from pathlib import Path
 from feature_extraction import FeatureVectorExtractor
-import pyarrow.parquet as pq
 import pyarrow.compute as pc
 
 from schemas import Schemas, Constants

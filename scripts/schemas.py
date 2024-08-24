@@ -106,7 +106,7 @@ class Schemas:
                         Constants.DOMAIN_WIDTHS: {
                             "type": "array",
                             "items": {
-                                "type": "string"
+                                "type": "integer"
                             }
                         },
                         Constants.STD_DEVIATION_DOMAIN: {
@@ -139,13 +139,13 @@ class Schemas:
                         Constants.CONSTRAINT_HISTOGRAM: {
                             "type": "object",
                             "additionalProperties": {
-                                "type": "string"
+                                "type": "integer"
                             }
                         },
                         Constants.ANNOTATION_HISTOGRAM: {
                             "type": "object",
                             "additionalProperties": {
-                                "type": "string"
+                                "type": "integer"
                             }
                         },
                         Constants.METHOD: {
@@ -200,17 +200,10 @@ class Helpers:
             else:
                 raise ValueError(f"key {col} not in df {df}, conversion can not be applied")
 
+    # JSON does not allow int keys, but parquet does.
     @staticmethod
     def __type_conversion_map_keys_str_to_int(map):
         return {int(k): str(v) for k, v in map.items()}
-
-    @staticmethod
-    def __type_conversion_str_list_to_int_list(lst):
-        return [int(v) for v in lst]
-
-    @staticmethod
-    def __type_conversion_map_vals_str_to_int(map):
-        return {k: int(v) for k, v in map.items()}
 
     """
     Reads json string that maybe represents a feature_vector type as pandas dataframe.
@@ -224,9 +217,6 @@ class Helpers:
         df = pd.DataFrame([js[Constants.FEATURE_VECTOR]])
         Helpers.normalize_dataframe(df, [Constants.ID_TO_VAR_NAME_MAP, Constants.ID_TO_CONSTRAINT_NAME_MAP],
                                     Helpers.__type_conversion_map_keys_str_to_int)
-        Helpers.normalize_dataframe(df, [Constants.DOMAIN_WIDTHS], Helpers.__type_conversion_str_list_to_int_list)
-        Helpers.normalize_dataframe(df, [Constants.ANNOTATION_HISTOGRAM, Constants.CONSTRAINT_HISTOGRAM],
-                                    Helpers.__type_conversion_map_vals_str_to_int)
         return df
 
 
