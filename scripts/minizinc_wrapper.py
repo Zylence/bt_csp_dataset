@@ -6,7 +6,7 @@ Invokes the minizinc.exe with arguments and captures the output.
 """
 class MinizincWrapper:
 
-    minizinc_executable = Path("../../libminizinc/out/build/x64-Debug/minizinc.exe").resolve()
+    minizinc_executable = Path(f"{Path(__file__).parent}/../libminizinc/out/build/x64-Debug/minizinc.exe").resolve()
     def run(self, args) -> (int, list[str]):
 
         command = f"{MinizincWrapper.minizinc_executable} {args}"
