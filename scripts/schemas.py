@@ -65,12 +65,22 @@ class Schemas:
         ])
 
         instance_result: pa.DataType = pa.struct([
-            pa.field(Constants.RUNTIME, pa.int64(), False),
-            pa.field(Constants.BACKTRACKS, pa.int64(), False),
+            pa.field(Constants.PROBLEM_ID, pa.string(), nullable=False),
+            pa.field(Constants.INSTANCE_PERMUTATION, pa.string(), nullable=False),
+            pa.field("initTime", pa.float64(), nullable=False),
+            pa.field("solveTime", pa.float64(), nullable=False),
+            pa.field("solutions", pa.int32(), nullable=False),  # This field is required in the JSON schema
+            pa.field("variables", pa.int32(), nullable=False),
+            pa.field("propagators", pa.int32(), nullable=False),
+            pa.field("propagations", pa.int32(), nullable=False),
+            pa.field("nodes", pa.int32(), nullable=False),
+            pa.field("failures", pa.int32(), nullable=False),
+            pa.field("restarts", pa.int32(), nullable=False),
+            pa.field("peakDepth", pa.int32(), nullable=False),
         ])
 
         instance_results: pa.Schema = pa.schema([
-            pa.field(Constants.INSTANCE_RESULTS, pa.map_(pa.string(), instance_result, True), False),
+            pa.field(Constants.INSTANCE_RESULTS, pa.list_(instance_result), False),
         ])
 
         feature_vector_instance_results: pa.Schema = pa.unify_schemas([feature_vector, instance_results])
@@ -232,7 +242,8 @@ class Helpers:
         try:
             validate(instance=data, schema=schema)
         except jsonschema.exceptions.ValidationError as err:
-            raise ValueError(f"json does not adhere to schema {err}")
+            print(f"json does not adhere to schema {err}")
+            raise
         return data
 
     @staticmethod
