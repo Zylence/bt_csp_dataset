@@ -6,7 +6,6 @@ import tempfile
 from pathlib import Path
 
 import pandas as pd
-from referencing import jsonschema
 
 from minizinc_wrapper import MinizincWrapper
 from parquet import ParquetReader, ParquetWriter
@@ -16,36 +15,46 @@ from schemas import Helpers, Schemas, Constants
 class Testdriver(MinizincWrapper):
 
     command_template = ' --solver gecode "{fzn_file}" --json-stream --solver-statistics --input-is-flatzinc'
+    errors = 0
 
     def __init__(self, workload_parquet: Path, output_folder: Path):
         self.workload_parquet = workload_parquet
         self.output_folder = output_folder
 
 
-    @staticmethod
-    def setup_logger():
-        logger = multiprocessing.get_logger()
-        handler = logging.FileHandler('testdriver.log')
-        formatter = logging.Formatter(
-            '%(asctime)s - %(levelname)s - %(processName)s - %(threadName)s - %(message)s'
-        )
-        handler.setFormatter(formatter)
-        logger.addHandler(handler)
-        logger.setLevel(logging.INFO)
-        return logger
+    class JobLogger:
+        def __init__(self, total_num_jobs: int):
+            logger = multiprocessing.get_logger()
+            handler = logging.FileHandler('testdriver.log')
+            formatter = logging.Formatter(
+                '%(asctime)s - %(levelname)s - %(processName)s - Job %(job)s - %(progress)s%% - %(message)s'
+            )
+            handler.setFormatter(formatter)
+            logger.addHandler(handler)
+
+            logger.setLevel(logging.INFO)
+            self.logger = logger
+            self.total_jobs = total_num_jobs
+
+        def log(self, level, job: int, message: str, job_name: str = ""):
+            progress = (job / self.total_jobs) * 100
+            extra = {'job': f"{job_name} {job}", 'progress': f"{progress:.2f}"}
+            self.logger.log(level, message, extra=extra)
+
 
     @staticmethod
-    def worker(job_queue, result_queue):
-        logger = Testdriver.setup_logger()
+    def worker(job_queue, result_queue, num_total_jobs):
+        logger = Testdriver.JobLogger(num_total_jobs)
         wrapper = MinizincWrapper()
 
         while True:
             try:
-                job = job_queue.get(timeout=10)
+                job_num, job = job_queue.get(timeout=10)
             except queue.Empty:
                 break
 
-            logger.info(f"Processing job {job[Constants.PROBLEM_ID]}")
+            logger.log(logging.INFO, job_num,
+                       f"Processing Variable Ordering {job[Constants.INSTANCE_PERMUTATION]}", job[Constants.PROBLEM_ID])
 
             fd, temp_file_name = tempfile.mkstemp(suffix=".fzn")
             with open(temp_file_name, 'w') as temp_file:
@@ -62,9 +71,13 @@ class Testdriver(MinizincWrapper):
                 res = df.to_dict(orient='records')
                 df2 = pd.DataFrame([{Constants.INSTANCE_RESULTS: res}])
 
+                logger.log(logging.INFO, job_num, f"Backtracks: {df["failures"][0]}, SolveTime: {df["solveTime"][0]}", job[Constants.PROBLEM_ID])  #TODO use constants instead of magic strings
+
                 result_queue.put(df2)
-            except jsonschema.exceptions.ValidationError as e:
-                logger.error(f"Validation error for job {job[Constants.PROBLEM_ID]}: {e}")
+            except Exception as e:
+                logger.log(logging.ERROR, job_num,
+                           f"Validation Error: {e}", job[Constants.PROBLEM_ID])
+                Testdriver.errors += 1
                 continue
 
 
@@ -73,21 +86,24 @@ class Testdriver(MinizincWrapper):
         job_reader = ParquetReader(Schemas.Parquet.instances)
         job_reader.load_table(self.workload_parquet.as_posix())
         jobs = job_reader.table.to_pandas().to_dict(orient="records")
-        logger = Testdriver.setup_logger()
+        logger = Testdriver.JobLogger(len(jobs))
 
         job_queue = multiprocessing.Queue()
         result_queue = multiprocessing.Queue()
 
-        for job in jobs:
-            job_queue.put(job)
+        logger.log(logging.INFO, 0, "Filling Job Queue")
+        for i, job in enumerate(jobs):
+            job_queue.put((i+1, job))
 
         writer = ParquetWriter(Schemas.Parquet.instance_results)
 
         num_workers = multiprocessing.cpu_count() // 2
         processes = []
 
+        logger.log(logging.INFO, 0, f"Processing will start using {num_workers} workers.")
+        logger.log(logging.INFO, 0, f"Assuming 2s per job, this is going to take {2*len(jobs)/60.0/60.0/num_workers}h")
         for _ in range(num_workers):
-            p = multiprocessing.Process(target=Testdriver.worker, args=(job_queue, result_queue))
+            p = multiprocessing.Process(target=Testdriver.worker, args=(job_queue, result_queue, len(jobs)))
             p.start()
             processes.append(p)
 
@@ -100,13 +116,20 @@ class Testdriver(MinizincWrapper):
 
             if processed_count % 1000 == 0:
                 writer.save_table(f"{self.output_folder.parent}/result_parquet_e{processed_count / 1000}.parquet")
-                logger.info(f"Checkpoint saved after {processed_count} writes.")
+                logger.log(logging.INFO, 0,
+                           f"Checkpoint saved after {processed_count} writes.")
 
         for p in processes:
             p.join()
 
         writer.save_table(f"{self.output_folder}")
-        logger.info("All jobs processed and final checkpoint saved.")
+        if Testdriver.errors == 0:
+            logger.log(logging.INFO, len(jobs),
+                       f"All jobs finished gracefully with {Testdriver.errors} errors.")
+        else:
+            logger.log(logging.WARN, len(jobs),
+                       f"Jobs finished with {Testdriver.errors} errors.") # this means investigate dataset
+
 
 if __name__ == "__main__":
     temp_dir = tempfile.TemporaryDirectory(delete=False)
