@@ -21,7 +21,8 @@ class TestFlatZincInstanceGenerator(unittest.TestCase):
         # Initialize the FlatZincInstanceGenerator with temporary files
         self.generator = FlatZincInstanceGenerator(
             feature_vector_parquet_input_file=Path(self.input_file).resolve(),
-            instances_parquet_output_file=Path(self.output_file).resolve()
+            instances_parquet_output_file=Path(self.output_file).resolve(),
+            max_vars=10
         )
 
     def tearDown(self):
@@ -29,10 +30,11 @@ class TestFlatZincInstanceGenerator(unittest.TestCase):
 
     def test_extract_variables(self):
         test_cases = [
-            ('solve :: int_search([x, y],', ['x', 'y']),
-            ('solve :: int_search([23, b, c],', ['23', 'b', 'c']),
-            ('solve :: int_search([],', []),
-            ('solve     ::      int_search([var1, var2, var3, var4],', ['var1', 'var2', 'var3', 'var4'])
+            ('solve :: int_search([x, y],', (['x', 'y'], None)),
+            ('solve :: int_search([23, b, c],', (['23', 'b', 'c'], None)),
+            ('solve :: int_search([],', ([], None)),
+            ('solve     ::      int_search([var1, var2, var3, var4],', (['var1', 'var2', 'var3', 'var4'], None)),
+            ('array [1..6] of var int: mark:: output_array([1..6]) = [0,X_INTRODUCED_17_,X_INTRODUCED_18_,X_INTRODUCED_19_,X_INTRODUCED_20_,X_INTRODUCED_21_]; \n solve     ::      int_search(mark,', (['0','X_INTRODUCED_17_','X_INTRODUCED_18_','X_INTRODUCED_19_','X_INTRODUCED_20_','X_INTRODUCED_21_'], "mark"))
         ]
 
         for fzn_content, expected_vars in test_cases:
@@ -48,16 +50,19 @@ class TestFlatZincInstanceGenerator(unittest.TestCase):
 
     def test_substitute_variables(self):
         test_cases = [
-            ('solve :: int_search([x, y],', ['a', 'b'], 'solve :: int_search([a,b],'),
-            ('solve :: int_search([var1],', ['x'], 'solve :: int_search([x],'),
-            ('solve :: int_search([],', [], 'solve :: int_search([],'),
-            ('solve :: int_search([x, y, z],', ['a', 'b', 'c'], 'solve :: int_search([a,b,c],')
+            ('solve :: int_search([x, y],', (['a', 'b'], None), 'solve :: int_search([a,b],'),
+            ('solve :: int_search([var1],', (['x'], None), 'solve :: int_search([x],'),
+            ('solve :: int_search([],', ([], None), 'solve :: int_search([],'),
+            ('solve :: int_search([x, y, z],', (['a', 'b', 'c'], None), 'solve :: int_search([a,b,c],'),
+            ('array [1..3] of var int: mark:: output_array([1..3]) = [1,2,3]; solve :: int_search(mark,', (['1', '2', '3'], 'mark'), 'array [1..3] of var int: mark:: output_array([1..3]) = [1,2,3]; solve :: int_search(mark,')
         ]
 
         for fzn_content, variables, expected_content in test_cases:
             with self.subTest(fzn_content=fzn_content, variables=variables):
-                actual_content = FlatZincInstanceGenerator.substitute_variables(fzn_content, variables)
+                actual_content = FlatZincInstanceGenerator.substitute_variables(fzn_content, *variables)
                 self.assertEqual(expected_content, actual_content)
+
+
 
     def test_run(self):
         self.generator.run()
@@ -65,7 +70,7 @@ class TestFlatZincInstanceGenerator(unittest.TestCase):
 
         # Load and verify some of the contents of the output file
         reader = ParquetReader(Schemas.Parquet.instances)
-        reader.load_table(self.output_file)
+        reader.load(self.output_file)
 
         col = reader.table[Constants.INSTANCE_PERMUTATION]
         entry_length = len(col[0].as_py())

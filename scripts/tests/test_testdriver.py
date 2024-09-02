@@ -1,3 +1,4 @@
+import logging
 import unittest
 import multiprocessing
 import tempfile
@@ -23,29 +24,26 @@ class TestTestdriver(unittest.TestCase):
         result_queue = multiprocessing.Queue()
 
         jobs = ParquetReader(Schemas.Parquet.instances)
-        jobs.load_table(self.workload_parquet.as_posix())
+        jobs.load(self.workload_parquet.as_posix())
         job_list = jobs.table.to_pandas().to_dict(orient="records")
 
-        for job in job_list:
-            job_queue.put(job)
+        for i, job in enumerate(job_list):
+            job_queue.put((i, job))
 
-        Testdriver.worker(job_queue, result_queue)
+        Testdriver.worker(job_queue, result_queue, len(job_list))
 
         results = []
         while not result_queue.empty():
             results.append(result_queue.get())
 
         self.assertGreater(len(results), 0)
-        for result_df in results:
-            self.assertIn(Constants.INSTANCE_RESULTS, result_df.columns)
-            self.assertEqual(len(result_df), 1)
 
     def test_main(self):
         testdriver = Testdriver(workload_parquet=self.workload_parquet, output_folder=self.result_parquet)
         testdriver.run()
 
         result_reader = ParquetReader(Schemas.Parquet.instance_results)
-        result_reader.load_table(self.result_parquet.as_posix())
+        result_reader.load(self.result_parquet.as_posix())
         result_table = result_reader.table.to_pandas()
 
         self.assertGreater(len(result_table), 0)
@@ -54,3 +52,4 @@ class TestTestdriver(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

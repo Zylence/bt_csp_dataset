@@ -5,8 +5,6 @@ import queue
 import tempfile
 from pathlib import Path
 
-import pandas as pd
-
 from minizinc_wrapper import MinizincWrapper
 from parquet import ParquetReader, ParquetWriter
 from schemas import Helpers, Schemas, Constants
@@ -31,7 +29,6 @@ class Testdriver(MinizincWrapper):
             )
             handler.setFormatter(formatter)
             logger.addHandler(handler)
-
             logger.setLevel(logging.INFO)
             self.logger = logger
             self.total_jobs = total_num_jobs
@@ -53,6 +50,7 @@ class Testdriver(MinizincWrapper):
             except queue.Empty:
                 break
 
+
             logger.log(logging.INFO, job_num,
                        f"Processing Variable Ordering {job[Constants.INSTANCE_PERMUTATION]}", job[Constants.PROBLEM_ID])
 
@@ -65,15 +63,18 @@ class Testdriver(MinizincWrapper):
             Path(temp_file_name).unlink()
 
             try:
-                df = Helpers.json_to_solution_statistics_dataframe(output[2])
-                df[Constants.INSTANCE_PERMUTATION] = "|".join(job[Constants.INSTANCE_PERMUTATION])
-                df[Constants.PROBLEM_ID] = job[Constants.PROBLEM_ID]
-                res = df.to_dict(orient='records')
-                df2 = pd.DataFrame([{Constants.INSTANCE_RESULTS: res}])
 
-                logger.log(logging.INFO, job_num, f"Backtracks: {df["failures"][0]}, SolveTime: {df["solveTime"][0]}", job[Constants.PROBLEM_ID])  #TODO use constants instead of magic strings
+                for o in output:
+                    if Constants.SOLVER_STATISTICS in o:
+                        data = Helpers.json_to_solution_statistics_dict(o) # todo search in output
+                        data[Constants.INSTANCE_PERMUTATION] = "|".join(job[Constants.INSTANCE_PERMUTATION])
+                        data[Constants.PROBLEM_ID] = job[Constants.PROBLEM_ID]
 
-                result_queue.put(df2)
+                        logger.log(logging.INFO, job_num, f"Backtracks: {data["failures"]}, SolveTime: {data["solveTime"]}", job[Constants.PROBLEM_ID]) # todo no magic strings
+
+                        result_queue.put(data)
+                        break # todo currently skips nSolutions, do we want to merge it?
+
             except Exception as e:
                 logger.log(logging.ERROR, job_num,
                            f"Validation Error: {e}", job[Constants.PROBLEM_ID])
@@ -84,7 +85,7 @@ class Testdriver(MinizincWrapper):
 
     def run(self, args=None):
         job_reader = ParquetReader(Schemas.Parquet.instances)
-        job_reader.load_table(self.workload_parquet.as_posix())
+        job_reader.load(self.workload_parquet.as_posix())
         jobs = job_reader.table.to_pandas().to_dict(orient="records")
         logger = Testdriver.JobLogger(len(jobs))
 

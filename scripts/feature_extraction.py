@@ -16,7 +16,7 @@ class FeatureVectorExtractor(MinizincWrapper):
         self.parquet_output = parquet_output_file
         self.writer = ParquetReadWriter(Schemas.Parquet.feature_vector)
         if parquet_output_file.exists():
-            self.writer.load_table(parquet_output_file.as_posix())
+            self.writer.load(parquet_output_file.as_posix())
         else:
             self.writer.save_table(parquet_output_file.as_posix())
 
@@ -26,18 +26,18 @@ class FeatureVectorExtractor(MinizincWrapper):
             #os.close(fd)
             #fznfile = Path(fznfile).resolve().as_posix()
             fznfile = f"{".".join(file.as_posix().split(".")[:-1])}.fzn" # todo move to temp folder, then we ll not have to unlink it.
-            args = f'--no-optimize --feature-vector --no-output-ozn --output-fzn-to-file {fznfile} "{file}" --json-stream --compile'
+            args = f' --two-pass --feature-vector --no-output-ozn --output-fzn-to-file {fznfile} "{file}" --json-stream --compile'
             ret_code, output_lines = super().run(args)
 
             if ret_code != 0:
                 raise Exception(f"Feature Extraction failed for file {fznfile}.")
 
-            df = Helpers.json_to_normalized_feature_vector_dataframe("\n".join(output_lines))
+            data = Helpers.json_to_normalized_feature_vector_dict("\n".join(output_lines))
 
             with open(fznfile, 'r') as f:
-                df[Constants.PROBLEM_ID] = fznfile.split("/")[-1]  # todo pass name or id in constructor of class
-                df[Constants.FLAT_ZINC] = f.read()
+                data[Constants.PROBLEM_ID] = fznfile.split("/")[-1]  # todo pass name or id in constructor of class
+                data[Constants.FLAT_ZINC] = f.read()
             Path(fznfile).resolve().unlink()
 
-            self.writer.append_row(df)
+            self.writer.append_row(data)
             self.writer.save_table(self.parquet_output.as_posix())
