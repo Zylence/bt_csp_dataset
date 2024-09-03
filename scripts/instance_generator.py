@@ -21,14 +21,13 @@ class FlatZincInstanceGenerator(MinizincWrapper):
     # command_template = '--json-stream --model-check-only --input-from-stdin --input-is-flatzinc'
 
     def __init__(self, feature_vector_parquet_input_file: Path, instances_parquet_output_file: Path, max_vars: int):
-        self.reader = ParquetReader(Schemas.Parquet.feature_vector)
-        self.reader.load(feature_vector_parquet_input_file.as_posix())
-        self.writer = ParquetWriter(Schemas.Parquet.instances)
+        self.reader = ParquetReader(Schemas.Parquet.feature_vector, feature_vector_parquet_input_file)
+        self.writer = ParquetWriter(Schemas.Parquet.instances, instances_parquet_output_file)
         self.output_path = instances_parquet_output_file
         self.max_vars = max_vars
 
     def run(self, args=None):
-        rows = self.reader.table.select([Constants.PROBLEM_ID, Constants.FLAT_ZINC])
+        rows = self.reader.table().select([Constants.PROBLEM_ID, Constants.FLAT_ZINC])
         row_data = []
         for i in range(rows.num_rows):
             entry = (rows[0][i].as_py(), rows[1][i].as_py())
@@ -70,12 +69,13 @@ class FlatZincInstanceGenerator(MinizincWrapper):
 
                 if num % 10000 == 0:
                     print(f"Currently at {num} / {len(orderings)} permutations.")
-                    self.writer.append_row_immediately(row_data) # todo only temp
+                    self.writer.append_row(row_data) # todo only temp
                     row_data = []
 
-
-
-        self.writer.save_table(self.output_path.as_posix())
+        if len(row_data) > 0:
+            self.writer.append_row(row_data)
+        self.writer.close_table()
+        self.reader.release()
 
 
     """

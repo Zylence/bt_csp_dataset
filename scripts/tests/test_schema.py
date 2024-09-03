@@ -1,6 +1,7 @@
 import os
 import tempfile
 import unittest
+from pathlib import Path
 from typing import Dict
 
 import pandas as pd
@@ -49,15 +50,13 @@ class TestSchemaAndTableUtils(unittest.TestCase):
 
     def test_create_table(self):
         schema = Schemas.Parquet.feature_vector
-        writer = ParquetWriter(schema)
         fd, temp_file = tempfile.mkstemp(suffix='.parquet')
         os.close(fd)
 
-        writer.save_table(temp_file)
-        reader = ParquetReader(schema)
-        reader.load(temp_file)
+        writer = ParquetWriter(schema, Path(temp_file).resolve(), overwrite=True)
+        writer.close_table()
+        reader = ParquetReader(schema, Path(temp_file).resolve())
 
-        self.assertEqual(len(writer.data), 0)
         self.assertEqual(reader.table.schema, schema)
         self.assertEqual(reader.table.num_rows, 0)
 
@@ -82,7 +81,7 @@ class TestSchemaAndTableUtils(unittest.TestCase):
         data[Constants.PROBLEM_ID] = "somestring"
         writer.append_row(data)
 
-        writer.save_table('test.parquet')
+        writer.close_table('test.parquet')
 
         reader = ParquetReader(schema)
         reader.load('test.parquet')

@@ -2,6 +2,7 @@ import unittest
 from pathlib import Path
 from feature_extraction import FeatureVectorExtractor
 import pyarrow.compute as pc
+import pyarrow.parquet as pa
 
 from schemas import Schemas, Constants
 
@@ -19,22 +20,17 @@ class TestFeatureVectorExtractorWithRealFiles(unittest.TestCase):
 
     def test_feature_vector_extraction(self):
         self.extractor.run()
+        table = pa.read_table(schema=Schemas.Parquet.feature_vector, source=self.parquet_file)
 
-        res = self.extractor.writer.synced_access(
-            lambda table: (
-                # some sanity checks on the parsed files
-                self.assertEqual(table.num_rows, 4),
-                self.assertEqual(table.schema, Schemas.Parquet.feature_vector),
-                self.assertEqual(pc.mean(table[Constants.MEDIAN_DOMAIN_SIZE]).as_py(), 18.75),  # or 15 with no optimization
-                self.assertEqual(pc.min(table[Constants.FLAT_INT_VARS]).as_py(), 0),
-                self.assertEqual(pc.max(table[Constants.FLAT_INT_VARS]).as_py(), 65),
-                self.assertEqual(pc.count(table[Constants.ANNOTATION_HISTOGRAM]).as_py(), 4),
-                self.assertAlmostEqual(pc.stddev(table[Constants.DOMAIN_WIDTHS][1].as_py()).as_py(), 8.48, 2),
-                table.schema
-            )
-        )
+        self.assertEqual(table.num_rows, 4),
+        self.assertEqual(table.schema, Schemas.Parquet.feature_vector),
+        self.assertEqual(pc.mean(table[Constants.MEDIAN_DOMAIN_SIZE]).as_py(), 18.75),  # or 15 with no optimization
+        self.assertEqual(pc.min(table[Constants.FLAT_INT_VARS]).as_py(), 0),
+        self.assertEqual(pc.max(table[Constants.FLAT_INT_VARS]).as_py(), 65),
+        self.assertEqual(pc.count(table[Constants.ANNOTATION_HISTOGRAM]).as_py(), 4),
+        self.assertAlmostEqual(pc.stddev(table[Constants.DOMAIN_WIDTHS][1].as_py()).as_py(), 8.48, 2),
 
-        print(res[7])
+        print(table.schema)
 
     def tearDown(self):
         if self.parquet_file.exists():

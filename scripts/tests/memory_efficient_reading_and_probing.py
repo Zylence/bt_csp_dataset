@@ -4,6 +4,7 @@ import os
 import queue
 import tempfile
 import threading
+import time
 from pathlib import Path
 
 import pyarrow.parquet as pq
@@ -14,7 +15,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from schemas import Constants
 from testdriver import Testdriver
 
-parquet_file = pq.ParquetFile(Path("../temp/instances_test.parquet").resolve())
+
+parquet_file = pq.ParquetFile(Path("temp/instances.parquet").resolve())
 
 
 #def process_chunk(table):
@@ -31,6 +33,7 @@ for i in range(parquet_file.num_row_groups):
 probed_rows = {}
 
 for i in range(parquet_file.num_row_groups):
+    i = i+1
     id_table = parquet_file.read_row_group(i, columns=[Constants.PROBLEM_ID])
     first_row_id = id_table.slice(0, 1).to_pydict()[Constants.PROBLEM_ID][0]
 
@@ -43,10 +46,11 @@ for i in range(parquet_file.num_row_groups):
         break
 
 timing = 0
+timing_e = 0
 jq = queue.Queue()
 rq = queue.Queue()
 for row_id, row in probed_rows.items():
-
+    start = time.time()
     #fd, filename = tempfile.mkstemp(delete=False, suffix=".parquet")
     #os.close(fd)
     #table = pa.Table.from_pydict(row)
@@ -57,11 +61,16 @@ for row_id, row in probed_rows.items():
     row[Constants.FLAT_ZINC] = row[Constants.FLAT_ZINC][0]
     jq.put((1, row))
     Testdriver.worker(job_queue=jq, result_queue=rq, num_total_jobs=1)
+    indiv_t = time.time() - start
+    print(indiv_t)
+    timing_e += (indiv_t)
     while not rq.empty():
-        res = rq.get(timeout=10)
+        res = rq.get(timeout=0)
         timing += (res["solveTime"] + res["initTime"])
         print(f"ID: {row_id}")
         print(row)
         print("-" * 40)
 
 print(timing / len(probed_rows))
+print(timing_e / len(probed_rows))
+

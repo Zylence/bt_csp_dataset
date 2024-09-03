@@ -6,8 +6,6 @@ from instance_generator import FlatZincInstanceGenerator
 # Press the green button in the gutter to run the script.
 if __name__ == '__main__':
     input_files = [
-        #Path('temp/social_golfers1.mzn').resolve(),
-        #Path('temp/water_buckets1.mzn').resolve(),
         Path('temp/magic_sequence3.mzn').resolve(),               #as is
         Path('temp/golomb_rulers.mzn').resolve(),                 #as is (m = 6)
         Path('temp/template_design.mzn').resolve(),               #edited (all vars tuned down)

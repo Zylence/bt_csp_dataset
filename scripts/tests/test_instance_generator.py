@@ -11,23 +11,6 @@ from schemas import Schemas, Constants
 
 class TestFlatZincInstanceGenerator(unittest.TestCase):
 
-    def setUp(self):
-        # Create temporary files for input and output
-        self.input_file = "test_data/feature_vector.parquet"
-        fd, filename = tempfile.mkstemp(suffix=".parquet")
-        os.close(fd)
-
-        self.output_file = filename
-        # Initialize the FlatZincInstanceGenerator with temporary files
-        self.generator = FlatZincInstanceGenerator(
-            feature_vector_parquet_input_file=Path(self.input_file).resolve(),
-            instances_parquet_output_file=Path(self.output_file).resolve(),
-            max_vars=10
-        )
-
-    def tearDown(self):
-        Path(self.output_file).unlink()
-
     def test_extract_variables(self):
         test_cases = [
             ('solve :: int_search([x, y],', (['x', 'y'], None)),
@@ -65,21 +48,35 @@ class TestFlatZincInstanceGenerator(unittest.TestCase):
 
 
     def test_run(self):
-        self.generator.run()
-        self.assertTrue(Path(self.output_file).exists(), "Output file was not created")
+
+        input_file = "test_data/feature_vector.parquet"
+        fd, filename = tempfile.mkstemp(suffix=".parquet")
+        os.close(fd)
+
+        output_file = Path(filename).resolve()
+        generator = FlatZincInstanceGenerator(
+            feature_vector_parquet_input_file=Path(input_file).resolve(),
+            instances_parquet_output_file=output_file,
+            max_vars=10
+        )
+
+        generator.run()
+        self.assertTrue( output_file.exists(), "Output file was not created")
 
         # Load and verify some of the contents of the output file
-        reader = ParquetReader(Schemas.Parquet.instances)
-        reader.load(self.output_file)
+        reader = ParquetReader(Schemas.Parquet.instances,  Path(output_file).resolve())
 
-        col = reader.table[Constants.INSTANCE_PERMUTATION]
+        col = reader.table()[Constants.INSTANCE_PERMUTATION]
         entry_length = len(col[0].as_py())
 
         for row in col:
             self.assertEqual(len(row.as_py()), entry_length, "Invalid Permutations")
 
         expected_row_count = math.factorial(entry_length)
-        self.assertEqual(reader.table.num_rows, expected_row_count, "Expected Permutation count differs")
+        self.assertEqual(reader.table().num_rows, expected_row_count, "Expected Permutation count differs")
+
+        reader.release()
+        Path(output_file).resolve().unlink()
 
 
 if __name__ == '__main__':

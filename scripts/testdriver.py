@@ -70,7 +70,7 @@ class Testdriver(MinizincWrapper):
                         data[Constants.INSTANCE_PERMUTATION] = "|".join(job[Constants.INSTANCE_PERMUTATION])
                         data[Constants.PROBLEM_ID] = job[Constants.PROBLEM_ID]
 
-                        logger.log(logging.INFO, job_num, f"Backtracks: {data["failures"]}, SolveTime: {data["solveTime"]}", job[Constants.PROBLEM_ID]) # todo no magic strings
+                        logger.log(logging.INFO, job_num, f"Backtracks: {data['failures']}, SolveTime: {data['solveTime']}", job[Constants.PROBLEM_ID]) # todo no magic strings
 
                         result_queue.put(data)
                         break # todo currently skips nSolutions, do we want to merge it?
@@ -84,9 +84,8 @@ class Testdriver(MinizincWrapper):
 
 
     def run(self, args=None):
-        job_reader = ParquetReader(Schemas.Parquet.instances)
-        job_reader.load(self.workload_parquet.as_posix())
-        jobs = job_reader.table.to_pandas().to_dict(orient="records")
+        job_reader = ParquetReader(Schemas.Parquet.instances, filename=self.workload_parquet)
+        jobs = job_reader.table().to_pandas().to_dict(orient="records")
         logger = Testdriver.JobLogger(len(jobs))
 
         job_queue = multiprocessing.Queue()
@@ -96,7 +95,7 @@ class Testdriver(MinizincWrapper):
         for i, job in enumerate(jobs):
             job_queue.put((i+1, job))
 
-        writer = ParquetWriter(Schemas.Parquet.instance_results)
+        writer = ParquetWriter(Schemas.Parquet.instance_results, self.output_folder)
 
         num_workers = multiprocessing.cpu_count() // 2
         processes = []
@@ -116,14 +115,14 @@ class Testdriver(MinizincWrapper):
             processed_count += 1
 
             if processed_count % 1000 == 0:
-                writer.save_table(f"{self.output_folder.parent}/result_parquet_e{processed_count / 1000}.parquet")
+                writer.close_table(f"{self.output_folder.parent}/result_parquet_e{processed_count / 1000}.parquet")
                 logger.log(logging.INFO, 0,
                            f"Checkpoint saved after {processed_count} writes.")
 
         for p in processes:
             p.join()
 
-        writer.save_table(f"{self.output_folder}")
+        writer.close_table(f"{self.output_folder}")
         if Testdriver.errors == 0:
             logger.log(logging.INFO, len(jobs),
                        f"All jobs finished gracefully with {Testdriver.errors} errors.")
