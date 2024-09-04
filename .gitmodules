@@ -1,0 +1,8 @@
+[submodule "libminizinc"]
+	path = libminizinc
+	url = git@github.com:Zylence/libminizinc.git
+	branch = feature_model_statistics
+[submodule "parquetviewer"]
+	path = parquetviewer
+	url = git@github.com:Zylence/ParquetViewer.git
+	branch = feature/show_dict_entries_in_quick_peek
