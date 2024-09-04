@@ -8,7 +8,6 @@ import pyarrow.parquet as pq
 import re
 import itertools
 from minizinc_wrapper import MinizincWrapper
-from parquet import ParquetReader, ParquetWriter
 from schemas import Constants, Schemas
 
 
@@ -21,13 +20,14 @@ class FlatZincInstanceGenerator(MinizincWrapper):
     # command_template = '--json-stream --model-check-only --input-from-stdin --input-is-flatzinc'
 
     def __init__(self, feature_vector_parquet_input_file: Path, instances_parquet_output_file: Path, max_vars: int):
-        self.reader = ParquetReader(Schemas.Parquet.feature_vector, feature_vector_parquet_input_file)
-        self.writer = ParquetWriter(Schemas.Parquet.instances, instances_parquet_output_file)
+        self.reader = pq.ParquetReader()
+        self.reader.open(feature_vector_parquet_input_file)
+        self.writer = pq.ParquetWriter(instances_parquet_output_file, schema=Schemas.Parquet.instances)
         self.output_path = instances_parquet_output_file
         self.max_vars = max_vars
 
     def run(self, args=None):
-        rows = self.reader.table().select([Constants.PROBLEM_ID, Constants.FLAT_ZINC])
+        rows = self.reader.read_all().select([Constants.PROBLEM_ID, Constants.FLAT_ZINC])
         row_data = []
         for i in range(rows.num_rows):
             entry = (rows[0][i].as_py(), rows[1][i].as_py())
@@ -69,13 +69,15 @@ class FlatZincInstanceGenerator(MinizincWrapper):
 
                 if num % 10000 == 0:
                     print(f"Currently at {num} / {len(orderings)} permutations.")
-                    self.writer.append_row(row_data) # todo only temp
+                    table = pa.Table.from_pylist(mapping=row_data, schema=Schemas.Parquet.instances)
+                    self.writer.write_table(table)
                     row_data = []
 
         if len(row_data) > 0:
-            self.writer.append_row(row_data)
-        self.writer.close_table()
-        self.reader.release()
+            table = pa.Table.from_pylist(mapping=row_data, schema=Schemas.Parquet.instances)
+            self.writer.write_table(table)
+        self.writer.close()
+        self.reader.close()
 
 
     """
@@ -122,15 +124,23 @@ class FlatZincInstanceGenerator(MinizincWrapper):
     #    )
 
     @staticmethod
-    def substitute_variables(fzn_content: str, variables: list[str], array_name: str = None) -> str:
+    def substitute_variables(fzn_content: str, variables: list[str]) -> str:
         variables_str = f"[{','.join(variables)}]"
 
-        if not array_name:
-            # Old format: Substitute directly within the int_search annotation
+        match = FlatZincInstanceGenerator.int_search_pattern.search(fzn_content.replace('\n', ''))
+
+        if not match:
+            return fzn_content # todo fatal handle?
+
+        array_or_var = match.group(1).strip()  # either anonymous array [ ... ] or named array
+
+        # array is anonymous
+        if array_or_var.startswith('['):
             return FlatZincInstanceGenerator.int_search_pattern.sub(
                 f"solve :: int_search({variables_str},", fzn_content
             )
+        # array is named
         else:
-            array_pattern = re.compile(rf"({re.escape(array_name)}[^;]*=\s*)(\[.*?\])(;)", re.DOTALL)
+            array_pattern = re.compile(rf"({re.escape(array_or_var)}[^;]*=\s*)(\[.*?\])(;)", re.DOTALL)
             fzn_content = array_pattern.sub(rf"\1{variables_str}\3", fzn_content)
             return fzn_content

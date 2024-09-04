@@ -4,8 +4,8 @@ import unittest
 import tempfile
 from pathlib import Path
 
+import pyarrow.parquet as pq
 from instance_generator import FlatZincInstanceGenerator
-from parquet import ParquetReader
 from schemas import Schemas, Constants
 
 
@@ -64,18 +64,20 @@ class TestFlatZincInstanceGenerator(unittest.TestCase):
         self.assertTrue( output_file.exists(), "Output file was not created")
 
         # Load and verify some of the contents of the output file
-        reader = ParquetReader(Schemas.Parquet.instances,  Path(output_file).resolve())
+        reader = pq.ParquetReader()
+        reader.open(Path(output_file).resolve())
+        table = reader.read_all()
 
-        col = reader.table()[Constants.INSTANCE_PERMUTATION]
+        col = table[Constants.INSTANCE_PERMUTATION]
         entry_length = len(col[0].as_py())
 
         for row in col:
             self.assertEqual(len(row.as_py()), entry_length, "Invalid Permutations")
 
         expected_row_count = math.factorial(entry_length)
-        self.assertEqual(reader.table().num_rows, expected_row_count, "Expected Permutation count differs")
+        self.assertEqual(table.num_rows, expected_row_count, "Expected Permutation count differs")
 
-        reader.release()
+        reader.close()
         Path(output_file).resolve().unlink()
 
 

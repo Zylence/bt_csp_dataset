@@ -4,8 +4,8 @@ import unittest
 from pathlib import Path
 from typing import Dict
 
-import pandas as pd
-from parquet import ParquetWriter, ParquetReader
+import pyarrow.parquet as pq
+import pyarrow as pa
 from schemas import Constants, Schemas, Helpers
 
 
@@ -48,46 +48,25 @@ class TestSchemaAndTableUtils(unittest.TestCase):
         TestSchemaAndTableUtils.assertSubset(self, {1: "X_INTRODUCED_17_", 2: "X_INTRODUCED_18_"}, data[Constants.ID_TO_VAR_NAME_MAP])
         TestSchemaAndTableUtils.assertSubset(self, {26: "int_lin_eq", 36: "bool2int"}, data[Constants.ID_TO_CONSTRAINT_NAME_MAP])
 
-    def test_create_table(self):
+    def test_write_table(self):
         schema = Schemas.Parquet.feature_vector
         fd, temp_file = tempfile.mkstemp(suffix='.parquet')
         os.close(fd)
 
-        writer = ParquetWriter(schema, Path(temp_file).resolve(), overwrite=True)
-        writer.close_table()
-        reader = ParquetReader(schema, Path(temp_file).resolve())
+        writer = pq.ParquetWriter(Path(temp_file).resolve(), schema=schema)
+        data = Helpers.json_to_normalized_feature_vector_dict(self.feature_vector_json)
+        data[Constants.PROBLEM_ID] = "somestring"
+        table = pa.Table.from_pylist([data], schema=schema)
+        writer.write_table(table)
+        writer.close()
 
-        self.assertEqual(reader.table.schema, schema)
-        self.assertEqual(reader.table.num_rows, 0)
+        res_table = pq.read_table(Path(temp_file).resolve(), schema=schema)
+
+        self.assertEqual(res_table.num_rows, 1)
+        self.assertEqual(set(res_table.schema.names), set(schema.names))
 
         os.remove(temp_file)
 
-    def test_append_row(self):
-        schema = Schemas.Parquet.feature_vector
-        writer = ParquetWriter(schema)
-
-        data = Helpers.json_to_normalized_feature_vector_dict(self.feature_vector_json)
-        data[Constants.PROBLEM_ID] = "somestring"
-        writer.append_row(data)
-
-        self.assertEqual(len(writer.data), 1)
-        self.assertEqual(set(writer.data[0].keys()), set(schema.names))
-
-    def test_save_table(self):
-        schema = Schemas.Parquet.feature_vector
-        writer = ParquetWriter(schema)
-
-        data = Helpers.json_to_normalized_feature_vector_dict(self.feature_vector_json)
-        data[Constants.PROBLEM_ID] = "somestring"
-        writer.append_row(data)
-
-        writer.close_table('test.parquet')
-
-        reader = ParquetReader(schema)
-        reader.load('test.parquet')
-
-        self.assertEqual(reader.table.num_rows, 1)
-        self.assertEqual(reader.table.schema, schema)
 
 
 if __name__ == '__main__':

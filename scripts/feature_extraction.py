@@ -1,9 +1,8 @@
-import os
-import tempfile
 from pathlib import Path
 from minizinc_wrapper import MinizincWrapper
-from parquet import ParquetWriter
 from schemas import Schemas, Helpers, Constants
+import pyarrow.parquet as pq
+import pyarrow as pa
 
 """
 Uses MiniZinc to extract the feature vector of a .mzn files. And outputs the parsed feature vector into
@@ -14,7 +13,7 @@ class FeatureVectorExtractor(MinizincWrapper):
     def __init__(self, input_files: list[Path], parquet_output_file: Path):
         self.input_files = input_files
         self.parquet_output = parquet_output_file
-        self.writer = ParquetWriter(Schemas.Parquet.feature_vector, parquet_output_file)
+        self.writer = pq.ParquetWriter(parquet_output_file, schema=Schemas.Parquet.feature_vector)
 
     def run(self, args=None):
         chunk = []
@@ -37,9 +36,7 @@ class FeatureVectorExtractor(MinizincWrapper):
             Path(fznfile).resolve().unlink()
 
             chunk.append(data)
-            #if i % 2 == 0:
-            #    self.writer.append_row(chunk)
-            #    chunk = []
 
-        self.writer.append_row(chunk)
-        self.writer.close_table()
+        table = pa.Table.from_pylist(mapping=chunk, schema=Schemas.Parquet.feature_vector)
+        self.writer.write_table(table)
+        self.writer.close()
