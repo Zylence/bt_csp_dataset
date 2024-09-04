@@ -1,41 +1,48 @@
+import math
 from pathlib import Path
+from typing import Optional, List, Dict, Generator
 
 import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
 import re
 import itertools
 from minizinc_wrapper import MinizincWrapper
-from parquet import ParquetReader, ParquetWriter
 from schemas import Constants, Schemas
 
 
 class FlatZincInstanceGenerator(MinizincWrapper):
-
-    int_search_pattern = re.compile(r"solve\s*::\s*int_search\s*\(\s*(\[.*?\])\s*,", re.DOTALL)
+    int_search_pattern = re.compile(r"solve\s*::\s*int_search\s*\(\s*(\[\s*.*?\s*\]|\w+)\s*,", re.DOTALL)
+    array_declaration_pattern = re.compile(r"array\s*\[\d+\.\.\d+\]\s*of\s*var\s*int:\s*(\w+)\s*=\s*(\[.*?\]);",
+                                           re.DOTALL)
     vars_array_pattern = re.compile(r'\b[\w\[\]]+\b')
     command_template = '"{fzn_file}" --json-stream --model-check-only'
     # command_template = '--json-stream --model-check-only --input-from-stdin --input-is-flatzinc'
 
-    def __init__(self, feature_vector_parquet_input_file: Path, instances_parquet_output_file: Path):
-        self.reader = ParquetReader(Schemas.Parquet.feature_vector)
-        self.reader.load_table(feature_vector_parquet_input_file.as_posix())
-        self.writer = ParquetWriter(Schemas.Parquet.instances)
+    def __init__(self, feature_vector_parquet_input_file: Path, instances_parquet_output_file: Path, max_vars: int):
+        self.reader = pq.ParquetReader()
+        self.reader.open(feature_vector_parquet_input_file)
+        self.writer = pq.ParquetWriter(instances_parquet_output_file, schema=Schemas.Parquet.instances)
         self.output_path = instances_parquet_output_file
+        self.max_vars = max_vars
 
     def run(self, args=None):
-        rows = self.reader.table.select([Constants.PROBLEM_ID, Constants.FLAT_ZINC])
-        print(rows)
-
-        processed_results = []
+        rows = self.reader.read_all().select([Constants.PROBLEM_ID, Constants.FLAT_ZINC])
+        row_data = []
         for i in range(rows.num_rows):
             entry = (rows[0][i].as_py(), rows[1][i].as_py())
-            variables = FlatZincInstanceGenerator.extract_variables(entry[1])
+            variables, array_name = FlatZincInstanceGenerator.extract_variables(entry[1])
             if len(variables) == 0:
                 raise Exception(f"No variables could be extracted from {entry}")
+            elif len(variables) > self.max_vars:
+                print(f"WARN: SKIPPING {entry[0]} because it has too many deciding variables {len(variables)}")
+                continue
+            print(f"INF: Generating {math.factorial(len(variables))} permutations for {entry[0]}")
 
             orderings = self.generate_permutations(variables)
-            for ordering in orderings:
+            for num, ordering in enumerate(orderings):
                 ordering_lst = list(ordering)
-                new_zinc = FlatZincInstanceGenerator.substitute_variables(entry[1], ordering_lst)
+                new_zinc = FlatZincInstanceGenerator.substitute_variables(entry[1], ordering_lst, array_name)
 
                 # sanity check that the newly generated flatZinc file is not broken - todo do via stdin
                 # Very expensive and also a little redundant. todo maybe only check sporadically?
@@ -54,37 +61,86 @@ class FlatZincInstanceGenerator(MinizincWrapper):
                 #finally:
                 #    Path(temp_file_name).unlink()
 
-
-                processed_results.append({
+                row_data.append({
                     Constants.PROBLEM_ID: entry[0],
                     Constants.INSTANCE_PERMUTATION: ordering_lst,
                     Constants.FLAT_ZINC: new_zinc
                 })
 
-        self.writer.append_row(pd.DataFrame(processed_results))
-        self.writer.save_table(self.output_path.as_posix())
+                if num % 10000 == 0:
+                    print(f"Currently at {num} / {len(orderings)} permutations.")
+                    table = pa.Table.from_pylist(mapping=row_data, schema=Schemas.Parquet.instances)
+                    self.writer.write_table(table)
+                    row_data = []
+
+        if len(row_data) > 0:
+            table = pa.Table.from_pylist(mapping=row_data, schema=Schemas.Parquet.instances)
+            self.writer.write_table(table)
+        self.writer.close()
+        self.reader.close()
 
 
+    """
+    Returns the list of variables extracted from the int_search annotation. 
+    In special cases, where the input variables are defined in other places of the file, also returns
+    the array name they are defined in. 
+    """
     @staticmethod
-    def extract_variables(fzn_content: str) -> list[str]:
-        # Regex pattern to match int_search with different possible formats
+    def extract_variables(fzn_content: str) -> (list[str], Optional[str]):
+        # First, try to find a direct int_search pattern
         match = FlatZincInstanceGenerator.int_search_pattern.search(fzn_content.replace('\n', ''))
 
         if not match:
-            return []
+            return [], None
 
-        variables_str = match.group(1)
-        variables = re.findall(FlatZincInstanceGenerator.vars_array_pattern, variables_str)
+        array_or_var = match.group(1).strip()
 
-        return variables
+        # If the match is an array (starts with '['), extract variables directly
+        if array_or_var.startswith('['):
+            variables = re.findall(FlatZincInstanceGenerator.vars_array_pattern, array_or_var)
+            return variables, None
+        else:
+            array_name = array_or_var
+            array_pattern = re.compile(rf"{re.escape(array_name)}[^;]*=\s*\[(.*?)\];", re.DOTALL)
+
+            array_match = array_pattern.search(fzn_content.replace('\n', ''))
+
+            if array_match:
+                array_content = array_match.group(1)
+                variables = re.findall(FlatZincInstanceGenerator.vars_array_pattern, array_content)
+                return variables, array_name
+
+        return [], None
 
     @staticmethod
     def generate_permutations(variables):
         return list(itertools.permutations(variables))
 
+    #@staticmethod
+    #def substitute_variables(fzn_content: str, variables: list[str]) -> str:
+    #    variables_str = f"[{','.join(variables)}]"
+    #    return FlatZincInstanceGenerator.int_search_pattern.sub(
+    #         f"solve :: int_search({variables_str},", fzn_content
+    #    )
+
     @staticmethod
     def substitute_variables(fzn_content: str, variables: list[str]) -> str:
         variables_str = f"[{','.join(variables)}]"
-        return FlatZincInstanceGenerator.int_search_pattern.sub(
-             f"solve :: int_search({variables_str},", fzn_content
-        )
+
+        match = FlatZincInstanceGenerator.int_search_pattern.search(fzn_content.replace('\n', ''))
+
+        if not match:
+            return fzn_content # todo fatal handle?
+
+        array_or_var = match.group(1).strip()  # either anonymous array [ ... ] or named array
+
+        # array is anonymous
+        if array_or_var.startswith('['):
+            return FlatZincInstanceGenerator.int_search_pattern.sub(
+                f"solve :: int_search({variables_str},", fzn_content
+            )
+        # array is named
+        else:
+            array_pattern = re.compile(rf"({re.escape(array_or_var)}[^;]*=\s*)(\[.*?\])(;)", re.DOTALL)
+            fzn_content = array_pattern.sub(rf"\1{variables_str}\3", fzn_content)
+            return fzn_content

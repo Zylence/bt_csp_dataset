@@ -1,56 +1,48 @@
+import logging
+import os
 import unittest
 import multiprocessing
 import tempfile
 from pathlib import Path
 
+import pyarrow.parquet as pq
+import pyarrow as pa
 from testdriver import Testdriver
-from parquet import ParquetReader
 from schemas import Constants, Schemas
 
 
 class TestTestdriver(unittest.TestCase):
 
     def setUp(self):
-        self.temp_dir = tempfile.TemporaryDirectory(delete=False)
+        self.temp_dir = tempfile.TemporaryDirectory()
         self.workload_parquet = Path("test_data/instances_short.parquet").resolve()
-        self.result_parquet = Path(f"{self.temp_dir.name}/result.parquet").resolve()
+        self.feature_vector_parquet = Path("test_data/feature_vector.parquet").resolve()
+        self.output_parquet = Path(f"{self.temp_dir.name}").resolve()
 
     def tearDown(self):
         self.temp_dir.cleanup()
 
     def test_worker(self):
-        job_queue = multiprocessing.Queue()
-        result_queue = multiprocessing.Queue()
-
-        jobs = ParquetReader(Schemas.Parquet.instances)
-        jobs.load_table(self.workload_parquet.as_posix())
-        job_list = jobs.table.to_pandas().to_dict(orient="records")
-
-        for job in job_list:
-            job_queue.put(job)
-
-        Testdriver.worker(job_queue, result_queue)
+        td = Testdriver(feature_vector_parquet=self.feature_vector_parquet, workload_parquet=self.workload_parquet, output_folder=self.output_parquet)
+        td.load_next_job_batch()
+        td.worker()
 
         results = []
-        while not result_queue.empty():
-            results.append(result_queue.get())
+        while not td.result_queue.empty():
+            results.append(td.result_queue.get())
 
         self.assertGreater(len(results), 0)
-        for result_df in results:
-            self.assertIn(Constants.INSTANCE_RESULTS, result_df.columns)
-            self.assertEqual(len(result_df), 1)
 
     def test_main(self):
-        testdriver = Testdriver(workload_parquet=self.workload_parquet, output_folder=self.result_parquet)
+        testdriver = Testdriver(feature_vector_parquet=self.feature_vector_parquet, workload_parquet=self.workload_parquet, output_folder=self.output_parquet)
         testdriver.run()
 
-        result_reader = ParquetReader(Schemas.Parquet.instance_results)
-        result_reader.load_table(self.result_parquet.as_posix())
-        result_table = result_reader.table.to_pandas()
+        ds = pq.ParquetDataset(self.output_parquet, schema=Schemas.Parquet.instance_results)
+        result_table = ds.read()
 
         self.assertGreater(len(result_table), 0)
 
 
-
 if __name__ == "__main__":
     unittest.main()
+

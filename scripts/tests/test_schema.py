@@ -1,7 +1,11 @@
+import os
+import tempfile
 import unittest
+from pathlib import Path
+from typing import Dict
 
-import pandas as pd
-from parquet import ParquetWriter, ParquetReader
+import pyarrow.parquet as pq
+import pyarrow as pa
 from schemas import Constants, Schemas, Helpers
 
 
@@ -23,10 +27,10 @@ class TestSchemaAndTableUtils(unittest.TestCase):
         '''
 
     def test_json_to_dataframe_valid(self):
-        df = Helpers.json_to_normalized_feature_vector_dataframe(self.feature_vector_json)
-        self.assertIsInstance(df, pd.DataFrame)
-        self.assertEqual(df.iloc[0][Constants.FLAT_BOOL_VARS], 13)
-        self.assertEqual(df.iloc[0][Constants.FLAT_INT_VARS], 65)
+        data = Helpers.json_to_normalized_feature_vector_dict(self.feature_vector_json)
+        self.assertIsInstance(data, Dict)
+        self.assertEqual(data[Constants.FLAT_BOOL_VARS], 13)
+        self.assertEqual(data[Constants.FLAT_INT_VARS], 65)
 
     def test_json_to_dataframe_invalid(self):
         with self.assertRaises(ValueError):
@@ -39,41 +43,30 @@ class TestSchemaAndTableUtils(unittest.TestCase):
             tc.assertEqual(actual[key], value, f"Value for key {key} does not match")
 
     def test_json_to_normalized_feature_vector_dataframe(self):
-        df = Helpers.json_to_normalized_feature_vector_dataframe(self.feature_vector_json)
-        self.assertIsInstance(df, pd.DataFrame)
-        TestSchemaAndTableUtils.assertSubset(self, {1: "X_INTRODUCED_17_", 2: "X_INTRODUCED_18_"}, df.iloc[0][Constants.ID_TO_VAR_NAME_MAP])
-        TestSchemaAndTableUtils.assertSubset(self, {26: "int_lin_eq", 36: "bool2int"}, df.iloc[0][Constants.ID_TO_CONSTRAINT_NAME_MAP])
+        data = Helpers.json_to_normalized_feature_vector_dict(self.feature_vector_json)
+        self.assertIsInstance(data, Dict)
+        TestSchemaAndTableUtils.assertSubset(self, {1: "X_INTRODUCED_17_", 2: "X_INTRODUCED_18_"}, data[Constants.ID_TO_VAR_NAME_MAP])
+        TestSchemaAndTableUtils.assertSubset(self, {26: "int_lin_eq", 36: "bool2int"}, data[Constants.ID_TO_CONSTRAINT_NAME_MAP])
 
-    def test_create_table(self):
+    def test_write_table(self):
         schema = Schemas.Parquet.feature_vector
-        writer = ParquetWriter(schema)
-        self.assertEqual(writer.table.num_rows, 0)
-        self.assertEqual(writer.table.schema, schema)
+        fd, temp_file = tempfile.mkstemp(suffix='.parquet')
+        os.close(fd)
 
-    def test_append_row(self):
-        schema = Schemas.Parquet.feature_vector
-        writer = ParquetWriter(schema)
+        writer = pq.ParquetWriter(Path(temp_file).resolve(), schema=schema)
+        data = Helpers.json_to_normalized_feature_vector_dict(self.feature_vector_json)
+        data[Constants.PROBLEM_ID] = "somestring"
+        table = pa.Table.from_pylist([data], schema=schema)
+        writer.write_table(table)
+        writer.close()
 
-        df = Helpers.json_to_normalized_feature_vector_dataframe(self.feature_vector_json)
-        writer.append_row(df)
+        res_table = pq.read_table(Path(temp_file).resolve(), schema=schema)
 
-        self.assertEqual(writer.table.num_rows, 1)
-        self.assertEqual(writer.table.column_names, schema.names)
+        self.assertEqual(res_table.num_rows, 1)
+        self.assertEqual(set(res_table.schema.names), set(schema.names))
 
-    def test_save_table(self):
-        schema = Schemas.Parquet.feature_vector
-        writer = ParquetWriter(schema)
+        os.remove(temp_file)
 
-        df = Helpers.json_to_normalized_feature_vector_dataframe(self.feature_vector_json)
-        writer.append_row(df)
-
-        writer.save_table('test.parquet')
-
-        reader = ParquetReader(schema)
-        reader.load_table('test.parquet')
-
-        self.assertEqual(reader.table.num_rows, 1)
-        self.assertEqual(reader.table.schema, schema)
 
 
 if __name__ == '__main__':
