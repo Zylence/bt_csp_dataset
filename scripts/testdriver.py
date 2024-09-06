@@ -26,19 +26,18 @@ class Testdriver:
     result_buffer_size = 10_000
     num_workers = multiprocessing.cpu_count() // 2
 
-    def __init__(self, feature_vector_parquet: Path, workload_parquet: Path, output_folder: Path):
+    def __init__(self, feature_vector_parquet: Path, workload_parquet_folder: Path, output_folder: Path):
         self.output_folder = output_folder
         self.job_queue = multiprocessing.Queue()
         self.result_queue = multiprocessing.Queue()
         self.job_view = "job_view"
-        self.job_counter = 0
         self.con = duckdb.connect(database=':memory:')
-
+        self.job_counter = 0
         self.con.execute(f"""
             CREATE TEMPORARY VIEW {self.job_view} AS 
-            SELECT * FROM '{workload_parquet}/**/*.parquet'
+            SELECT * FROM '{workload_parquet_folder}/**/*.parquet'
         """)
-        self.job_count = self.con.execute(f"""SELECT COUNT(*) FROM {self.job_view}""").arrow().to_pydict()["count_star()"][0]
+        self.job_count = self.con.execute(f"""SELECT COUNT(*) FROM {self.job_view}""").fetchone()[0]
         vectors = pq.read_table(feature_vector_parquet, schema=Schemas.Parquet.feature_vector).to_pylist()
         self.feature_vectors = {}
         for vector in vectors:
@@ -69,7 +68,7 @@ class Testdriver:
 
         while True:
             try:
-                job_num, job = self.job_queue.get(timeout=0)
+                job_num, job = self.job_queue.get(timeout=10)
             except queue.Empty:
                 break
 
@@ -82,16 +81,26 @@ class Testdriver:
 
             try:
 
+                found_statistics = False
+                # in the output look for the line that matches the json statistics schema.
                 for o in output:
-                    if Constants.SOLVER_STATISTICS in o:
-                        data = Helpers.json_to_solution_statistics_dict(o) # todo search in output
-                        data[Constants.INSTANCE_PERMUTATION] = "|".join(job[Constants.INSTANCE_PERMUTATION])
-                        data[Constants.PROBLEM_ID] = job[Constants.PROBLEM_ID]
+                    try:
+                        data = Helpers.json_to_solution_statistics_dict(o)
+                        found_statistics = True
+                    except:
+                        continue
 
-                        logger.log(logging.INFO, job_num, f"Backtracks: {data['failures']}, SolveTime: {data['solveTime']}", job[Constants.PROBLEM_ID]) # todo no magic strings
+                    data[Constants.INSTANCE_PERMUTATION] = "|".join(job[Constants.INSTANCE_PERMUTATION])
+                    data[Constants.PROBLEM_ID] = job[Constants.PROBLEM_ID]
 
-                        self.result_queue.put(data)
-                        break # todo currently skips nSolutions, do we want to merge it?
+                    logger.log(logging.INFO, job_num, f"Backtracks: {data[Constants.FAILURES]}, SolveTime: {data[Constants.SOLVE_TIME]}", job[Constants.PROBLEM_ID])
+
+                    self.result_queue.put(data)
+                    if found_statistics:
+                        break
+
+                if not found_statistics:
+                    raise ValueError(f"No {Constants.SOLVER_STATISTICS} found in output.") #todo log job num
 
             except Exception as e:
                 logger.log(logging.ERROR, job_num,
@@ -188,7 +197,7 @@ class Testdriver:
         processed_count = 0
         buffer = []
         while processed_count < self.job_count:
-            output = self.result_queue.get()            # todo keep job_counter ordering sorted, maybe make buffer sorted?
+            output = self.result_queue.get(timeout=10)            # todo keep job_counter ordering sorted, maybe make buffer sorted?
             buffer.append(output)
             processed_count += 1
 
@@ -226,5 +235,5 @@ if __name__ == "__main__":
     feature_vector_parquet = Path("temp/vector.parquet")
     workload_parquet = Path("instances").resolve()
     result_parquet = Path(f"result").resolve()
-    testdriver = Testdriver(feature_vector_parquet=feature_vector_parquet, workload_parquet=workload_parquet, output_folder=result_parquet)
+    testdriver = Testdriver(feature_vector_parquet=feature_vector_parquet, workload_parquet_folder=workload_parquet, output_folder=result_parquet)
     testdriver.run()

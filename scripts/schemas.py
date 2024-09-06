@@ -1,9 +1,7 @@
 from typing import Mapping, Any
-import pandas as pd
 import pyarrow as pa
 import json
 from jsonschema.validators import validate
-from referencing import jsonschema
 
 
 class Constants:
@@ -31,13 +29,23 @@ class Constants:
     FLAT_ZINC = "flatZinc"
 
     ####
-    RUNTIME = "runtime"
-    BACKTRACKS = "backtracks"
     INSTANCE_RESULTS = "instanceResults"
 
+    OUTPUT_TYPE = "type"
     SOLVER_STATISTICS = "statistics"
     INSTANCE_PERMUTATION = "instancePermutation"
     ROW_NUM = "row"
+
+    INIT_TIME = "initTime"
+    SOLVE_TIME = "solveTime"
+    SOLUTIONS = "solutions"
+    VARIABLES = "variables"
+    PROPAGATORS = "propagators"
+    PROPAGATIONS = "propagations"
+    NODES = "nodes"
+    FAILURES = "failures"   #backtracks
+    RESTARTS = "restarts"
+    PEAK_DEPTH = "peakDepth"
 
 
 class Schemas:
@@ -68,16 +76,16 @@ class Schemas:
         __irs = [
             pa.field(Constants.PROBLEM_ID, pa.string(), nullable=False),
             pa.field(Constants.INSTANCE_PERMUTATION, pa.string(), nullable=False),
-            pa.field("initTime", pa.float64(), nullable=False),
-            pa.field("solveTime", pa.float64(), nullable=False),
-            pa.field("solutions", pa.int32(), nullable=False),  # This field is required in the JSON schema
-            pa.field("variables", pa.int32(), nullable=False),
-            pa.field("propagators", pa.int32(), nullable=False),
-            pa.field("propagations", pa.int32(), nullable=False),
-            pa.field("nodes", pa.int32(), nullable=False),
-            pa.field("failures", pa.int32(), nullable=False),
-            pa.field("restarts", pa.int32(), nullable=False),
-            pa.field("peakDepth", pa.int32(), nullable=False),
+            pa.field(Constants.INIT_TIME, pa.float64(), nullable=False),
+            pa.field(Constants.SOLVE_TIME, pa.float64(), nullable=False),
+            pa.field(Constants.SOLUTIONS, pa.int32(), nullable=False),
+            pa.field(Constants.VARIABLES, pa.int32(), nullable=False),
+            pa.field(Constants.PROPAGATORS, pa.int32(), nullable=False),
+            pa.field(Constants.PROPAGATIONS, pa.int32(), nullable=False),
+            pa.field(Constants.NODES, pa.int32(), nullable=False),
+            pa.field(Constants.FAILURES, pa.int32(), nullable=False),
+            pa.field(Constants.RESTARTS, pa.int32(), nullable=False),
+            pa.field(Constants.PEAK_DEPTH, pa.int32(), nullable=False),
         ]
 
         # struct
@@ -87,12 +95,6 @@ class Schemas:
         instance_results: pa.Schema = pa.schema(
             __irs
         )
-
-        #instance_results: pa.Schema = pa.schema([
-        #    pa.field(Constants.INSTANCE_RESULTS, pa.list_(instance_result), False),
-        #])
-
-        #feature_vector_instance_results: pa.Schema = pa.unify_schemas([feature_vector, instance_results])
 
         instances: pa.Schema = pa.schema(
             [
@@ -107,7 +109,7 @@ class Schemas:
             "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
             "properties": {
-                "type": {
+                Constants.OUTPUT_TYPE: {
                     "type": "string",
                     "enum": [Constants.FEATURE_VECTOR]
                 },
@@ -207,7 +209,7 @@ class Schemas:
                 }
             },
             "required": [
-                "type",
+                Constants.OUTPUT_TYPE,
                 Constants.FEATURE_VECTOR
             ]
         }
@@ -215,30 +217,40 @@ class Schemas:
         solver_statistics = {
             "type": "object",
             "properties": {
-                "type": {
+                Constants.OUTPUT_TYPE: {
                     "type": "string",
-                    "enum": ["statistics"]  # Ensure that the "type" field must be "statistics"
+                    "enum": [Constants.SOLVER_STATISTICS]
                 },
                 "statistics": {
                     "type": "object",
                     "properties": {
-                        "initTime": {"type": "number"},
-                        "solveTime": {"type": "number"},
-                        "solutions": {"type": "integer"},
-                        "variables": {"type": "integer"},
-                        "propagators": {"type": "integer"},
-                        "propagations": {"type": "integer"},
-                        "nodes": {"type": "integer"},
-                        "failures": {"type": "integer"},
-                        "restarts": {"type": "integer"},
-                        "peakDepth": {"type": "integer"},
-                        "nSolutions": {"type": "integer"}
+                        Constants.INIT_TIME: {"type": "number"},
+                        Constants.SOLVE_TIME: {"type": "number"},
+                        Constants.SOLUTIONS: {"type": "integer"},
+                        Constants.VARIABLES: {"type": "integer"},
+                        Constants.PROPAGATORS: {"type": "integer"},
+                        Constants.PROPAGATIONS: {"type": "integer"},
+                        Constants.NODES: {"type": "integer"},
+                        Constants.FAILURES: {"type": "integer"},
+                        Constants.RESTARTS: {"type": "integer"},
+                        Constants.PEAK_DEPTH: {"type": "integer"}
                     },
-                    "required": ["solutions"],  # At least "solutions" must be present
-                    "additionalProperties": False  # No properties other than those specified are allowed
+                    "required": [
+                                Constants.INIT_TIME,
+                                Constants.SOLVE_TIME,
+                                Constants.SOLUTIONS,
+                                Constants.VARIABLES,
+                                Constants.PROPAGATORS,
+                                Constants.PROPAGATIONS,
+                                Constants.NODES,
+                                Constants.FAILURES,
+                                Constants.RESTARTS,
+                                Constants.PEAK_DEPTH,
+                                ],
+                    "additionalProperties": False
                 }
             },
-            "required": ["type", "statistics"],
+            "required": [Constants.OUTPUT_TYPE, Constants.SOLVER_STATISTICS],
             "additionalProperties": False
         }
 
@@ -247,12 +259,9 @@ class Helpers:
 
     @staticmethod
     def parse_json_validated(maybe_json: str, schema: Mapping[str, Any]):
+        """Throws if validating fails"""
         data = json.loads(maybe_json)
-        try:
-            validate(instance=data, schema=schema)
-        except Exception as err:
-            print(f"json does not adhere to schema {err}")
-            raise
+        validate(instance=data, schema=schema)
         return data
 
     @staticmethod
