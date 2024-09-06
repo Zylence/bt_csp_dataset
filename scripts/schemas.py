@@ -37,6 +37,7 @@ class Constants:
 
     SOLVER_STATISTICS = "statistics"
     INSTANCE_PERMUTATION = "instancePermutation"
+    ROW_NUM = "row"
 
 
 class Schemas:
@@ -96,8 +97,8 @@ class Schemas:
         instances: pa.Schema = pa.schema(
             [
                 pa.field(Constants.PROBLEM_ID, pa.string(), False),
+                pa.field(Constants.ROW_NUM, pa.int64(), False),
                 pa.field(Constants.INSTANCE_PERMUTATION, pa.list_(pa.string()), False),
-                pa.field(Constants.FLAT_ZINC, pa.string(), False)
             ]
         )
 
