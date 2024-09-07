@@ -1,4 +1,5 @@
 import bisect
+import glob
 import logging
 import multiprocessing
 import os
@@ -23,9 +24,9 @@ from schemas import Helpers, Schemas, Constants
 class Testdriver:
 
     command_template = ' --solver gecode --json-stream --solver-statistics --input-from-stdin --input-is-flatzinc'
-    job_loading_threshold = 10_000
+    job_loading_threshold = 100 #10_000
     backup_threshold = 5_000_000
-    result_parquet_chunksize = 10_000
+    result_parquet_chunksize = 50 #10_000
     num_workers = multiprocessing.cpu_count() - 2
 
     def __init__(self, feature_vector_parquet: Path, workload_parquet_folder: Path, output_folder: Path):
@@ -34,19 +35,35 @@ class Testdriver:
         self.result_queue = multiprocessing.Queue()
         self.job_view = "job_view"
         self.con = duckdb.connect(database=':memory:')
-        self.job_counter = 0
         self.failed_jobs_file = self.output_folder / "failed_jobs.txt"
 
+        os.makedirs(self.output_folder, exist_ok=True)
         self.con.execute(f"""
             CREATE TEMPORARY VIEW {self.job_view} AS 
             SELECT * FROM '{workload_parquet_folder}/**/*.parquet'
         """)
-        os.makedirs(self.output_folder, exist_ok=True)
+
+        output_file_pattern = f'{output_folder}/**/*.parquet'
+        if glob.glob(output_file_pattern):
+            self.job_counter = self.con.execute(
+                f"""
+                SELECT MIN(w.{Constants.ID})
+                FROM {self.job_view} w
+                LEFT JOIN '{output_file_pattern}' r
+                ON w.{Constants.ID} = r.{Constants.ID}
+                WHERE r.{Constants.ID} IS NULL
+                """).fetchone()[0]
+        else:
+            self.job_counter = self.con.execute(
+                f"""
+                    SELECT MIN({Constants.ID})
+                    FROM {self.job_view}
+                """).fetchone()[0]
         self.job_count = self.con.execute(f"""SELECT COUNT(*) FROM {self.job_view}""").fetchone()[0]
         vectors = pq.read_table(feature_vector_parquet, schema=Schemas.Parquet.feature_vector).to_pylist()
         self.feature_vectors = {}
         for vector in vectors:
-            self.feature_vectors[vector[Constants.PROBLEM_ID]] = vector
+            self.feature_vectors[vector[Constants.PROBLEM_NAME]] = vector
 
     # todo rotating logs
     class JobLogger:
@@ -73,15 +90,16 @@ class Testdriver:
 
         while True:
             try:
-                job_num, job = self.job_queue.get(timeout=queue_timeout) # todo job_num should mirror id from table!
+                job = self.job_queue.get(timeout=queue_timeout)
             except queue.Empty:
                 break
 
+            job_num = job[Constants.ID]
             logger.log(logging.DEBUG, job_num,
-                       f"Processing Variable Ordering {job[Constants.INSTANCE_PERMUTATION]}", job[Constants.PROBLEM_ID])
+                       f"Processing Variable Ordering {job[Constants.INSTANCE_PERMUTATION]}", job[Constants.PROBLEM_NAME])
 
             try:
-                associated_feature_vector = self.feature_vectors[job[Constants.PROBLEM_ID]]
+                associated_feature_vector = self.feature_vectors[job[Constants.PROBLEM_NAME]]
                 mutated_zinc = FlatZincInstanceGenerator.substitute_variables(
                     associated_feature_vector[Constants.FLAT_ZINC], job[Constants.INSTANCE_PERMUTATION])
                 _, output = MinizincWrapper.run(Testdriver.command_template, stdin=mutated_zinc)
@@ -96,10 +114,10 @@ class Testdriver:
                         continue
 
                     data[Constants.INSTANCE_PERMUTATION] = "|".join(job[Constants.INSTANCE_PERMUTATION])
-                    data[Constants.PROBLEM_ID] = job[Constants.PROBLEM_ID]
+                    data[Constants.PROBLEM_NAME] = job[Constants.PROBLEM_NAME]
                     data[Constants.ID] = job_num
 
-                    logger.log(logging.INFO, job_num, f"Backtracks: {data[Constants.FAILURES]}, SolveTime: {data[Constants.SOLVE_TIME]}", job[Constants.PROBLEM_ID])
+                    logger.log(logging.INFO, job_num, f"Backtracks: {data[Constants.FAILURES]}, SolveTime: {data[Constants.SOLVE_TIME]}", job[Constants.PROBLEM_NAME])
 
                     self.result_queue.put(data)
                     break
@@ -109,22 +127,28 @@ class Testdriver:
 
             except Exception as e:
                 logger.log(logging.ERROR, job_num,
-                           f"Validation Error: {e}", job[Constants.PROBLEM_ID])
+                           f"Validation Error: {e}", job[Constants.PROBLEM_NAME])
                 self.result_queue.put(job_num)  # communicates a job failure
                 continue
 
-    # todo make pickup where leftof
-    def load_next_job_batch(self):
-        if self.job_counter < self.job_count:
-            jobs = self.con.execute(f"""
-            SELECT * FROM {self.job_view}
-            WHERE {Constants.ID} >= {self.job_counter}
-            AND {Constants.ID} < {self.job_counter + Testdriver.job_loading_threshold}
-            """).arrow().to_pylist()
 
+    def load_next_job_batch(self):
+        """
+        Jobs are loaded in chunks, because storing them all in memory would require to much ram.
+        """
+        loaded_in_this_batch = 0
+        while self.job_counter < self.job_count and loaded_in_this_batch < Testdriver.job_loading_threshold:
+
+            jobs = self.con.execute(f"""
+                SELECT * FROM {self.job_view}
+                WHERE {Constants.ID} >= {self.job_counter}
+                AND {Constants.ID} < {self.job_counter + Testdriver.job_loading_threshold}
+                """).arrow().to_pylist()
+
+            loaded_in_this_batch += len(jobs)
             for job in jobs:
-                self.job_counter += 1
-                self.job_queue.put((self.job_counter, job))
+                self.job_queue.put(job)
+            self.job_counter += loaded_in_this_batch
 
     def probe(self, logger: JobLogger):
         """
@@ -136,7 +160,7 @@ class Testdriver:
         # ov every problem fetch one row (one instance)
         problem_samples = self.con.execute(
             f"""SELECT 
-            DISTINCT ON({Constants.PROBLEM_ID}) {Constants.PROBLEM_ID}, {Constants.INSTANCE_PERMUTATION} 
+            DISTINCT ON({Constants.PROBLEM_NAME}) {Constants.PROBLEM_NAME}, {Constants.ID}, {Constants.INSTANCE_PERMUTATION} 
             FROM {self.job_view}""")
 
         probe_rows = problem_samples.arrow().to_pylist()
@@ -145,22 +169,22 @@ class Testdriver:
         for row in probe_rows:
             start = time.time()
 
-            # TODO this block does not survive debugging - i have no clue why
-            self.job_queue.put_nowait((1, row))
+            # TODO sometimes this just hangs
+            self.job_queue.put_nowait(row)
             self.worker(0)
-            _ = self.result_queue.get_nowait()
+            _ = self.result_queue.get()
 
             indiv_t = time.time() - start
-            logger.log(logging.INFO, 0, f"Probing 1 Job took {indiv_t}s", row[Constants.PROBLEM_ID])
+            logger.log(logging.INFO, 0, f"Probing 1 Job took {indiv_t}s", row[Constants.PROBLEM_NAME])
 
             # get the number of jobs for this problem
             problem_count = self.con.execute(f"""
                 SELECT COUNT(*)
                 FROM {self.job_view}
-                WHERE {Constants.PROBLEM_ID} = '{row[Constants.PROBLEM_ID]}'
+                WHERE {Constants.PROBLEM_NAME} = '{row[Constants.PROBLEM_NAME]}'
             """).arrow().to_pydict()["count_star()"][0]
 
-            timings[row[Constants.PROBLEM_ID]] = (indiv_t, problem_count)
+            timings[row[Constants.PROBLEM_NAME]] = (indiv_t, problem_count)
 
         total_t = sum([i for i, _ in timings.values()])
         logger.log(logging.INFO, 0, f"Probing {len(probe_rows)} Jobs took {total_t}s")
@@ -179,7 +203,7 @@ class Testdriver:
         table = pa.Table.from_pylist(buffer, schema=Schemas.Parquet.instance_results)
         pq.write_to_dataset(table, root_path=self.output_folder, use_threads=True,
                             schema=Schemas.Parquet.instance_results,
-                            partition_cols=[Constants.PROBLEM_ID], existing_data_behavior="overwrite_or_ignore")
+                            partition_cols=[Constants.PROBLEM_NAME], existing_data_behavior="overwrite_or_ignore")
 
     def backup(self, filename: str):
         shutil.make_archive(str(self.output_folder / filename), 'zip', self.output_folder)
@@ -232,7 +256,7 @@ class Testdriver:
             # When the buffer is slightly larger than the chunksize we write we flush to disk
             # This way we will most likely be flushing fully sorted rows.
             # But as we can not be 100% certain, a postprocessing step is still required.
-            if len(sorted_buffer) >= int(Testdriver.result_parquet_chunksize * 1.1) == 0:
+            if len(sorted_buffer) >= int(Testdriver.result_parquet_chunksize * 1.1):
                 self.write_parquet(sorted_buffer[:Testdriver.result_parquet_chunksize])
                 logger.log(logging.INFO, 0,
                            f"Flushed Parquet Table to disk after {processed_count} jobs.")

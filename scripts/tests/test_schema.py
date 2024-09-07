@@ -55,7 +55,7 @@ class TestSchemaAndTableUtils(unittest.TestCase):
 
         writer = pq.ParquetWriter(Path(temp_file).resolve(), schema=schema)
         data = Helpers.json_to_normalized_feature_vector_dict(self.feature_vector_json)
-        data[Constants.PROBLEM_ID] = "somestring"
+        data[Constants.PROBLEM_NAME] = "somestring"
         table = pa.Table.from_pylist([data], schema=schema)
         writer.write_table(table)
         writer.close()

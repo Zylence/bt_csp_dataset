@@ -31,7 +31,7 @@ class FeatureVectorExtractor:
             data = Helpers.json_to_normalized_feature_vector_dict("\n".join(output_lines))
 
             with open(fznfile, 'r') as f:
-                data[Constants.PROBLEM_ID] = fznfile.split("/")[-1]  # todo pass name or id in constructor of class
+                data[Constants.PROBLEM_NAME] = fznfile.split("/")[-1]  # todo pass name or id in constructor of class
                 data[Constants.FLAT_ZINC] = f.read()
             Path(fznfile).resolve().unlink()
 

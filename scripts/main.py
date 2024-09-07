@@ -23,11 +23,11 @@ if __name__ == '__main__':
     ]
 
     parquet_file = Path('temp/vector.parquet').resolve()
-    #extractor = FeatureVectorExtractor(input_files, parquet_file)
-    #extractor.run()
+    extractor = FeatureVectorExtractor(input_files, parquet_file)
+    extractor.run()
 
-    instances = Path('temp/instances.parquet').resolve()
-    instanceGen = FlatZincInstanceGenerator(parquet_file, instances, 10)
-    instanceGen.run()
+    #instances = Path('temp/instances.parquet').resolve()
+    #instanceGen = FlatZincInstanceGenerator(parquet_file, instances, 10)
+    #instanceGen.run()
 
 

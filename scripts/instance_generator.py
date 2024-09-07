@@ -26,9 +26,9 @@ class FlatZincInstanceGenerator:
         self.max_vars = max_vars
 
     def probe(self):
-        rows = self.reader.read_all().select([Constants.PROBLEM_ID, Constants.FLAT_ZINC]).to_pylist()
+        rows = self.reader.read_all().select([Constants.PROBLEM_NAME, Constants.FLAT_ZINC]).to_pylist()
         for row in rows:
-            print(f"Probing {row[Constants.PROBLEM_ID]}")
+            print(f"Probing {row[Constants.PROBLEM_NAME]}")
             variables = FlatZincInstanceGenerator.extract_variables(row[Constants.FLAT_ZINC])
             if len(variables) == 0:
                 print(f"WARN No variables could be extracted flatzinc \n {row[Constants.FLAT_ZINC]}")
@@ -49,14 +49,14 @@ class FlatZincInstanceGenerator:
             if new_var_ordering_extracted != new_var_ordering:
                 print(f"WARN Instance generation sanity check failed")
             else:
-                print(f"Instance generation successful for {row[Constants.PROBLEM_ID]}")
+                print(f"Instance generation successful for {row[Constants.PROBLEM_NAME]}")
 
     def run(self):
-        rows = self.reader.read_all().select([Constants.PROBLEM_ID, Constants.FLAT_ZINC])
+        rows = self.reader.read_all().select([Constants.PROBLEM_NAME, Constants.FLAT_ZINC])
 
         self.probe()
 
-        row_num = 0
+        id = 0
         buffer = []
         for i in range(rows.num_rows):
             problem_id, fzn_content = rows[0][i].as_py(), rows[1][i].as_py()
@@ -73,11 +73,11 @@ class FlatZincInstanceGenerator:
                 ordering_lst = list(ordering)
 
                 buffer.append({
-                    Constants.PROBLEM_ID: problem_id,
-                    Constants.ID: row_num,
+                    Constants.PROBLEM_NAME: problem_id,
+                    Constants.ID: id,
                     Constants.INSTANCE_PERMUTATION: ordering_lst,
                 })
-                row_num += 1
+                id += 1
 
                 if num % FlatZincInstanceGenerator.result_buffer_size == 0:
                     print(f"Currently at {num} / {len(orderings)} permutations.")
@@ -93,7 +93,7 @@ class FlatZincInstanceGenerator:
         table = pa.Table.from_pylist(buffer, schema=Schemas.Parquet.instances)
         pq.write_to_dataset(table, root_path=self.output_folder, use_threads=True,
                             schema=Schemas.Parquet.instances,
-                            partition_cols=[Constants.PROBLEM_ID], existing_data_behavior="overwrite_or_ignore")
+                            partition_cols=[Constants.PROBLEM_NAME], existing_data_behavior="overwrite_or_ignore")
 
     """
     Returns the list of variables extracted from the int_search annotation. 
@@ -138,7 +138,7 @@ class FlatZincInstanceGenerator:
         match = FlatZincInstanceGenerator.int_search_pattern.search(fzn_content.replace('\n', ''))
 
         if not match:
-            return fzn_content # todo fatal handle?
+            raise Exception("No int_search pattern found in FlatZinc")
 
         array_or_var = match.group(1).strip()  # either anonymous array [ ... ] or named array
 
