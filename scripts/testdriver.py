@@ -1,7 +1,10 @@
+import bisect
 import logging
 import multiprocessing
+import os
 import queue
 import tempfile
+import threading
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -20,11 +23,10 @@ from schemas import Helpers, Schemas, Constants
 class Testdriver:
 
     command_template = ' --solver gecode --json-stream --solver-statistics --input-from-stdin --input-is-flatzinc'
-    errors = 0
     job_loading_threshold = 10_000
     backup_threshold = 5_000_000
-    result_buffer_size = 10_000
-    num_workers = multiprocessing.cpu_count() // 2
+    result_parquet_chunksize = 10_000
+    num_workers = multiprocessing.cpu_count() - 2
 
     def __init__(self, feature_vector_parquet: Path, workload_parquet_folder: Path, output_folder: Path):
         self.output_folder = output_folder
@@ -33,10 +35,13 @@ class Testdriver:
         self.job_view = "job_view"
         self.con = duckdb.connect(database=':memory:')
         self.job_counter = 0
+        self.failed_jobs_file = self.output_folder / "failed_jobs.txt"
+
         self.con.execute(f"""
             CREATE TEMPORARY VIEW {self.job_view} AS 
             SELECT * FROM '{workload_parquet_folder}/**/*.parquet'
         """)
+        os.makedirs(self.output_folder, exist_ok=True)
         self.job_count = self.con.execute(f"""SELECT COUNT(*) FROM {self.job_view}""").fetchone()[0]
         vectors = pq.read_table(feature_vector_parquet, schema=Schemas.Parquet.feature_vector).to_pylist()
         self.feature_vectors = {}
@@ -50,7 +55,7 @@ class Testdriver:
             if not logger.hasHandlers():
                 handler = logging.FileHandler('testdriver.log')
                 formatter = logging.Formatter(
-                    '%(asctime)s - %(levelname)s - %(processName)s - Job %(job)s - %(progress)s%% - %(message)s'
+                    '%(asctime)s - %(levelname)s - %(threadName)s - Job %(job)s - %(progress)s%% - %(message)s'
                 )
                 handler.setFormatter(formatter)
                 logger.addHandler(handler)
@@ -63,23 +68,23 @@ class Testdriver:
             extra = {'job': f"{job_name} {job}", 'progress': f"{progress:.2f}"}
             self.logger.log(level, message, extra=extra)
 
-    def worker(self):
+    def worker(self, queue_timeout):
         logger = Testdriver.JobLogger(self.job_count)
 
         while True:
             try:
-                job_num, job = self.job_queue.get(timeout=10)
+                job_num, job = self.job_queue.get(timeout=queue_timeout) # todo job_num should mirror id from table!
             except queue.Empty:
                 break
 
             logger.log(logging.DEBUG, job_num,
                        f"Processing Variable Ordering {job[Constants.INSTANCE_PERMUTATION]}", job[Constants.PROBLEM_ID])
 
-            associated_feature_vector = self.feature_vectors[job[Constants.PROBLEM_ID]]
-            mutated_zinc = FlatZincInstanceGenerator.substitute_variables(associated_feature_vector[Constants.FLAT_ZINC], job[Constants.INSTANCE_PERMUTATION])
-            _, output = MinizincWrapper.run(Testdriver.command_template, stdin=mutated_zinc)
-
             try:
+                associated_feature_vector = self.feature_vectors[job[Constants.PROBLEM_ID]]
+                mutated_zinc = FlatZincInstanceGenerator.substitute_variables(
+                    associated_feature_vector[Constants.FLAT_ZINC], job[Constants.INSTANCE_PERMUTATION])
+                _, output = MinizincWrapper.run(Testdriver.command_template, stdin=mutated_zinc)
 
                 found_statistics = False
                 # in the output look for the line that matches the json statistics schema.
@@ -92,20 +97,20 @@ class Testdriver:
 
                     data[Constants.INSTANCE_PERMUTATION] = "|".join(job[Constants.INSTANCE_PERMUTATION])
                     data[Constants.PROBLEM_ID] = job[Constants.PROBLEM_ID]
+                    data[Constants.ID] = job_num
 
                     logger.log(logging.INFO, job_num, f"Backtracks: {data[Constants.FAILURES]}, SolveTime: {data[Constants.SOLVE_TIME]}", job[Constants.PROBLEM_ID])
 
                     self.result_queue.put(data)
-                    if found_statistics:
-                        break
+                    break
 
                 if not found_statistics:
-                    raise ValueError(f"No {Constants.SOLVER_STATISTICS} found in output.") #todo log job num
+                    raise ValueError(f"No {Constants.SOLVER_STATISTICS} found in output.")
 
             except Exception as e:
                 logger.log(logging.ERROR, job_num,
                            f"Validation Error: {e}", job[Constants.PROBLEM_ID])
-                Testdriver.errors += 1
+                self.result_queue.put(job_num)  # communicates a job failure
                 continue
 
     # todo make pickup where leftof
@@ -113,8 +118,8 @@ class Testdriver:
         if self.job_counter < self.job_count:
             jobs = self.con.execute(f"""
             SELECT * FROM {self.job_view}
-            WHERE {Constants.ROW_NUM} >= {self.job_counter}
-            AND {Constants.ROW_NUM} < {self.job_counter + Testdriver.job_loading_threshold}
+            WHERE {Constants.ID} >= {self.job_counter}
+            AND {Constants.ID} < {self.job_counter + Testdriver.job_loading_threshold}
             """).arrow().to_pylist()
 
             for job in jobs:
@@ -122,6 +127,12 @@ class Testdriver:
                 self.job_queue.put((self.job_counter, job))
 
     def probe(self, logger: JobLogger):
+        """
+        Samples the jobs and executes one of each problem.
+        Collects timing information for estimations.
+        Fails early if anything went wrong in job generation.
+        :param logger: logger of the caller
+        """
         # ov every problem fetch one row (one instance)
         problem_samples = self.con.execute(
             f"""SELECT 
@@ -134,8 +145,9 @@ class Testdriver:
         for row in probe_rows:
             start = time.time()
 
+            # TODO this block does not survive debugging - i have no clue why
             self.job_queue.put_nowait((1, row))
-            self.worker()
+            self.worker(0)
             _ = self.result_queue.get_nowait()
 
             indiv_t = time.time() - start
@@ -163,7 +175,7 @@ class Testdriver:
         logger.log(logging.INFO, 0, f"Estimated total {estimated_total_h}h time with {Testdriver.num_workers} workers.")
 
 
-    def flush_buffer(self, buffer: list[Dict]):
+    def write_parquet(self, buffer: list[Dict]):
         table = pa.Table.from_pylist(buffer, schema=Schemas.Parquet.instance_results)
         pq.write_to_dataset(table, root_path=self.output_folder, use_threads=True,
                             schema=Schemas.Parquet.instance_results,
@@ -171,6 +183,7 @@ class Testdriver:
 
     def backup(self, filename: str):
         shutil.make_archive(str(self.output_folder / filename), 'zip', self.output_folder)
+
 
     def run(self):
         logger = Testdriver.JobLogger(self.job_count)
@@ -190,44 +203,58 @@ class Testdriver:
                 result_queue=self.result_queue,
                 job_count=self.job_count
             )
-            p = multiprocessing.Process(target=Testdriver.worker, args=(fake_self,))
+            p = threading.Thread(target=Testdriver.worker, args=(fake_self, 10)) # todo use executor service
             p.start()
             processes.append(p)
 
+        def sort_by(d: Dict) -> int:
+            return d[Constants.ID]
+
+        failed_jobs = 0
         processed_count = 0
-        buffer = []
+        sorted_buffer = []
         while processed_count < self.job_count:
-            output = self.result_queue.get(timeout=10)            # todo keep job_counter ordering sorted, maybe make buffer sorted?
-            buffer.append(output)
+            output = self.result_queue.get(timeout=10)
             processed_count += 1
+
+            # check for failed job
+            if isinstance(output, int):
+                failed_jobs += 1
+                with open(self.failed_jobs_file, mode="a") as f:
+                    f.write(f"{output}\n")
+            else:
+                bisect.insort(sorted_buffer, output, key=sort_by)
 
             if processed_count % Testdriver.job_loading_threshold == 0:
                 self.load_next_job_batch()
                 logger.log(logging.INFO, 0, f"Loaded new batch of jobs.")
 
-            if len(buffer) % Testdriver.result_buffer_size == 0:
-                self.flush_buffer(buffer)
+            # When the buffer is slightly larger than the chunksize we write we flush to disk
+            # This way we will most likely be flushing fully sorted rows.
+            # But as we can not be 100% certain, a postprocessing step is still required.
+            if len(sorted_buffer) >= int(Testdriver.result_parquet_chunksize * 1.1) == 0:
+                self.write_parquet(sorted_buffer[:Testdriver.result_parquet_chunksize])
                 logger.log(logging.INFO, 0,
                            f"Flushed Parquet Table to disk after {processed_count} jobs.")
-                buffer.clear()
+                sorted_buffer = sorted_buffer[Testdriver.result_parquet_chunksize:]
 
             if processed_count % Testdriver.backup_threshold == 0:
                 self.backup(f"backup_{processed_count // Testdriver.backup_threshold}")
 
-        if len(buffer) > 0:
-            self.flush_buffer(buffer)
+        if len(sorted_buffer) > 0:
+            self.write_parquet(sorted_buffer)
             logger.log(logging.INFO, 0,
                        f"Final Flush of Parquet Table to disk.")
 
         for p in processes:
             p.join()
 
-        if Testdriver.errors == 0:
+        if failed_jobs == 0:
             logger.log(logging.INFO, processed_count,
-                       f"All jobs finished gracefully with {Testdriver.errors} errors.")
+                       f"All jobs finished gracefully.")
         else:
             logger.log(logging.WARN, processed_count,
-                       f"Jobs finished with {Testdriver.errors} errors.") # this means investigate dataset
+                       f" {failed_jobs} Jobs failed.") # this means investigate dataset
 
 
 if __name__ == "__main__":

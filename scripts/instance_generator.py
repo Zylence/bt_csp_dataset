@@ -74,22 +74,22 @@ class FlatZincInstanceGenerator:
 
                 buffer.append({
                     Constants.PROBLEM_ID: problem_id,
-                    Constants.ROW_NUM: row_num,
+                    Constants.ID: row_num,
                     Constants.INSTANCE_PERMUTATION: ordering_lst,
                 })
                 row_num += 1
 
                 if num % FlatZincInstanceGenerator.result_buffer_size == 0:
                     print(f"Currently at {num} / {len(orderings)} permutations.")
-                    self.flush_buffer(buffer)
+                    self.write_parquet(buffer)
                     buffer.clear()
 
         if len(buffer) > 0:
-            self.flush_buffer(buffer)
+            self.write_parquet(buffer)
 
         self.reader.close()
 
-    def flush_buffer(self, buffer: list[Dict]):
+    def write_parquet(self, buffer: list[Dict]):
         table = pa.Table.from_pylist(buffer, schema=Schemas.Parquet.instances)
         pq.write_to_dataset(table, root_path=self.output_folder, use_threads=True,
                             schema=Schemas.Parquet.instances,

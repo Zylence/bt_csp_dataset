@@ -25,7 +25,7 @@ class TestTestdriver(unittest.TestCase):
     def test_worker(self):
         td = Testdriver(feature_vector_parquet=self.feature_vector_parquet, workload_parquet_folder=self.workload_parquet, output_folder=self.output_parquet)
         td.load_next_job_batch()
-        td.worker()
+        td.worker(2)
 
         results = []
         while not td.result_queue.empty():

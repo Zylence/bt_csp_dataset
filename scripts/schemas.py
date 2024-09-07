@@ -5,7 +5,7 @@ from jsonschema.validators import validate
 
 
 class Constants:
-    PROBLEM_ID = "problemId"
+    PROBLEM_ID = "problemId" #todo rename: problemName
     FEATURE_VECTOR = "feature_vector"
 
     FLAT_BOOL_VARS = "flatBoolVars"
@@ -34,7 +34,7 @@ class Constants:
     OUTPUT_TYPE = "type"
     SOLVER_STATISTICS = "statistics"
     INSTANCE_PERMUTATION = "instancePermutation"
-    ROW_NUM = "row"
+    ID = "row"  #unique #todo neame : id
 
     INIT_TIME = "initTime"
     SOLVE_TIME = "solveTime"
@@ -75,6 +75,7 @@ class Schemas:
 
         __irs = [
             pa.field(Constants.PROBLEM_ID, pa.string(), nullable=False),
+            pa.field(Constants.ID, pa.int64(), nullable=False),
             pa.field(Constants.INSTANCE_PERMUTATION, pa.string(), nullable=False),
             pa.field(Constants.INIT_TIME, pa.float64(), nullable=False),
             pa.field(Constants.SOLVE_TIME, pa.float64(), nullable=False),
@@ -99,7 +100,7 @@ class Schemas:
         instances: pa.Schema = pa.schema(
             [
                 pa.field(Constants.PROBLEM_ID, pa.string(), False),
-                pa.field(Constants.ROW_NUM, pa.int64(), False),
+                pa.field(Constants.ID, pa.int64(), False),
                 pa.field(Constants.INSTANCE_PERMUTATION, pa.list_(pa.string()), False),
             ]
         )
