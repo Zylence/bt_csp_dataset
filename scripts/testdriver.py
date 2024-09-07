@@ -1,4 +1,5 @@
 import bisect
+import datetime
 import glob
 import logging
 import multiprocessing
@@ -212,14 +213,12 @@ class Testdriver:
 
         logger.log(logging.INFO, 0, f"Estimated total {estimated_total_h}h time with {Testdriver.num_workers} workers.")
 
-    @staticmethod
-    def parquet_file_visitor(data):
-        pass
-
-    def write_parquet(self, buffer: list[Dict]):
+    def write_parquet(self, buffer: list[Dict], num: int, logger: JobLogger):
         table = pa.Table.from_pylist(buffer, schema=Schemas.Parquet.instance_results)
         pq.write_to_dataset(table, root_path=self.output_folder, use_threads=True,
                             schema=Schemas.Parquet.instance_results,
+                            file_visitor=lambda x: logger.log(logging.INFO, 0, f"Parquet Writer touched {x.path}"),
+                            basename_template=f"part_{{i}}{num}_{datetime.datetime.now():%H-%M-%S-%f}.parquet",  #  {{i}} must be included...
                             partition_cols=[Constants.PROBLEM_NAME], existing_data_behavior="overwrite_or_ignore")
 
     def backup(self, filename: str):
@@ -274,7 +273,7 @@ class Testdriver:
             # This way we will most likely be flushing fully sorted rows.
             # But as we can not be 100% certain, a postprocessing step is still required.
             if len(sorted_buffer) >= int(Testdriver.result_parquet_chunksize * 1.1):
-                self.write_parquet(sorted_buffer[:Testdriver.result_parquet_chunksize])
+                self.write_parquet(sorted_buffer[:Testdriver.result_parquet_chunksize], processed_count // Testdriver.result_parquet_chunksize,  logger)
                 logger.log(logging.INFO, 0,
                            f"Flushed Parquet Table to disk after {processed_count} jobs.")
                 sorted_buffer = sorted_buffer[Testdriver.result_parquet_chunksize:]
@@ -283,7 +282,7 @@ class Testdriver:
                 self.backup(f"backup_{processed_count // Testdriver.backup_threshold}")
 
         if len(sorted_buffer) > 0:
-            self.write_parquet(sorted_buffer)
+            self.write_parquet(sorted_buffer, processed_count // Testdriver.result_parquet_chunksize, logger)
             logger.log(logging.INFO, 0,
                        f"Final Flush of Parquet Table to disk.")
 
