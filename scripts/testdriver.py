@@ -218,11 +218,14 @@ class Testdriver:
 
     def write_parquet(self, buffer: list[Dict], num: int, logger: JobLogger):
         table = pa.Table.from_pylist(buffer, schema=Schemas.Parquet.instance_results)
-        pq.write_to_dataset(table, root_path=self.output_folder, use_threads=True,
+        pq.write_to_dataset(table=table,
+                            root_path=self.output_folder,
+                            use_threads=True,
                             schema=Schemas.Parquet.instance_results,
                             file_visitor=lambda x: logger.log(logging.INFO, 0, f"Parquet Writer touched {x.path}"),
                             basename_template=f"part_{{i}}{num}_{datetime.datetime.now():%H-%M-%S-%f}.parquet",  #  {{i}} must be included...
-                            partition_cols=[Constants.PROBLEM_NAME], existing_data_behavior="overwrite_or_ignore")
+                            partition_cols=[Constants.PROBLEM_NAME],
+                            existing_data_behavior="overwrite_or_ignore")
 
     def backup(self, filename: str):
         with zipfile.ZipFile(str(self.backup_path / filename), 'w', zipfile.ZIP_DEFLATED) as zipf:

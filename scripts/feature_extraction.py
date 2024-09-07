@@ -1,3 +1,4 @@
+import tempfile
 from pathlib import Path
 from minizinc_wrapper import MinizincWrapper
 from schemas import Schemas, Helpers, Constants
@@ -17,26 +18,25 @@ class FeatureVectorExtractor:
 
     def run(self):
         chunk = []
-        for i, file in enumerate(self.input_files):
-            #fd, fznfile = tempfile.mkstemp(suffix='.fzn')
-            #os.close(fd)
-            #fznfile = Path(fznfile).resolve().as_posix()
-            fznfile = f"{'.'.join(file.as_posix().split('.')[:-1])}.fzn" # todo move to temp folder, then we ll not have to unlink it.
-            args = f' --two-pass --feature-vector --no-output-ozn --output-fzn-to-file {fznfile} "{file}" --json-stream --compile'
+        temp_folder = tempfile.TemporaryDirectory()
+        for i, mzn_fqn in enumerate(self.input_files):
+            raw_filename = mzn_fqn.as_posix().split("/")[-1].rstrip(".mzn")
+            fznfile_fqn = f"{temp_folder.name}/{raw_filename}.fzn"
+            args = f' --two-pass --feature-vector --no-output-ozn --output-fzn-to-file {fznfile_fqn} "{mzn_fqn}" --json-stream --compile'
             ret_code, output_lines = MinizincWrapper.run(args)
 
             if ret_code != 0:
-                raise Exception(f"Feature Extraction failed for file {fznfile}.")
+                raise Exception(f"Feature Extraction failed for file {fznfile_fqn}.")
 
             data = Helpers.json_to_normalized_feature_vector_dict("\n".join(output_lines))
 
-            with open(fznfile, 'r') as f:
-                data[Constants.PROBLEM_NAME] = fznfile.split("/")[-1]  # todo pass name or id in constructor of class
+            with open(fznfile_fqn, 'r') as f:
+                data[Constants.PROBLEM_NAME] = raw_filename
                 data[Constants.FLAT_ZINC] = f.read()
-            Path(fznfile).resolve().unlink()
 
             chunk.append(data)
 
         table = pa.Table.from_pylist(mapping=chunk, schema=Schemas.Parquet.feature_vector)
         self.writer.write_table(table)
         self.writer.close()
+        temp_folder.cleanup()
