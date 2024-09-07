@@ -27,13 +27,14 @@ class Testdriver:
 
     command_template = ' --solver gecode --json-stream --solver-statistics --input-from-stdin --input-is-flatzinc'
     job_loading_threshold = 100 #10_000
-    backup_threshold = 5_000_000
+    backup_threshold = 100 #5_000_000
     result_parquet_chunksize = 50 #10_000
     num_workers = multiprocessing.cpu_count() - 2
 
-    def __init__(self, feature_vector_parquet: Path, workload_parquet_folder: Path, output_folder: Path, log_path: Path):
+    def __init__(self, feature_vector_parquet: Path, workload_parquet_folder: Path, output_folder: Path, log_path: Path, backup_path: Path):
         self.output_folder = output_folder
         self.log_path = log_path
+        self.backup_path = backup_path
         self.job_queue = multiprocessing.Queue()
         self.result_queue = multiprocessing.Queue()
         self.job_view = "job_view"
@@ -42,6 +43,7 @@ class Testdriver:
 
         # create output folder if not exists
         os.makedirs(self.output_folder, exist_ok=True)
+        os.makedirs(self.backup_path, exist_ok=True)
 
         # create view on parquet input data to read from
         self.con.execute(f"""
@@ -222,8 +224,7 @@ class Testdriver:
                             partition_cols=[Constants.PROBLEM_NAME], existing_data_behavior="overwrite_or_ignore")
 
     def backup(self, filename: str):
-        shutil.make_archive(str(self.output_folder / filename), 'zip', self.output_folder)
-
+        shutil.make_archive(str(self.backup_path / filename), 'zip', self.output_folder)
 
     def run(self):
         logger = Testdriver.JobLogger(self.job_count, self.log_path)
@@ -235,17 +236,17 @@ class Testdriver:
 
         logger.log(logging.INFO, 0, f"Processing will start using {Testdriver.num_workers} workers.")
 
-        processes = []
+        threads = []
         for _ in range(Testdriver.num_workers):
-            p = threading.Thread(target=Testdriver.worker, kwargs={
+            t = threading.Thread(target=Testdriver.worker, kwargs={
                 "job_queue": self.job_queue,
                 "result_queue": self.result_queue,
                 "feature_vectors": self.feature_vectors,
                 "logger": logger,
                 "queue_timeout": 30}
-            ) # todo use executor service (maybe?)
-            p.start()
-            processes.append(p)
+            )
+            t.start()
+            threads.append(t)
 
         def sort_by(d: Dict) -> int:
             return d[Constants.ID]
@@ -286,15 +287,15 @@ class Testdriver:
             logger.log(logging.INFO, 0,
                        f"Final Flush of Parquet Table to disk.")
 
-        for p in processes:
-            p.join()
+        for t in threads:
+            t.join()
 
         if failed_jobs == 0:
             logger.log(logging.INFO, processed_count,
                        f"All jobs finished gracefully.")
         else:
             logger.log(logging.WARN, processed_count,
-                       f" {failed_jobs} Jobs failed.") # this means investigate dataset
+                       f" {failed_jobs} Jobs failed.")  # this means investigate dataset
 
 
 if __name__ == "__main__":
@@ -302,10 +303,12 @@ if __name__ == "__main__":
     feature_vector_parquet = Path("temp/vector.parquet")
     workload_parquet = Path("instances").resolve()
     result_parquet = Path(f"result").resolve()
+    backups = Path(f"backups").resolve()
     testdriver = Testdriver(
         feature_vector_parquet=feature_vector_parquet,
         workload_parquet_folder=workload_parquet,
         output_folder=result_parquet,
+        backup_path=backups,
         log_path=result_parquet
     )
     testdriver.run()

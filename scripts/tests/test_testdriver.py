@@ -27,6 +27,7 @@ class TestTestdriver(unittest.TestCase):
         td = Testdriver(feature_vector_parquet=self.feature_vector_parquet,
                         workload_parquet_folder=self.workload_parquet,
                         output_folder=self.output_parquet,
+                        backup_path=self.output_parquet,
                         log_path=self.output_parquet
                         )
         td.load_next_job_batch()
