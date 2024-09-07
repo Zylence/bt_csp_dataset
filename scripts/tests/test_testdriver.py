@@ -23,7 +23,11 @@ class TestTestdriver(unittest.TestCase):
         self.temp_dir.cleanup()
 
     def test_worker(self):
-        td = Testdriver(feature_vector_parquet=self.feature_vector_parquet, workload_parquet_folder=self.workload_parquet, output_folder=self.output_parquet)
+        td = Testdriver(feature_vector_parquet=self.feature_vector_parquet,
+                        workload_parquet_folder=self.workload_parquet,
+                        output_folder=self.output_parquet,
+                        log_path=self.output_parquet
+                        )
         td.load_next_job_batch()
         td.worker(2)
 
@@ -34,7 +38,10 @@ class TestTestdriver(unittest.TestCase):
         self.assertGreater(len(results), 0)
 
     def test_main(self):
-        testdriver = Testdriver(feature_vector_parquet=self.feature_vector_parquet, workload_parquet_folder=self.workload_parquet, output_folder=self.output_parquet)
+        testdriver = Testdriver(feature_vector_parquet=self.feature_vector_parquet,
+                                workload_parquet_folder=self.workload_parquet,
+                                output_folder=self.output_parquet,
+                                log_path=self.output_parquet)
         testdriver.run()
 
         ds = pq.ParquetDataset(self.output_parquet, schema=Schemas.Parquet.instance_results)

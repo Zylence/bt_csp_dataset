@@ -7,6 +7,7 @@ import queue
 import tempfile
 import threading
 import time
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Dict
@@ -29,20 +30,26 @@ class Testdriver:
     result_parquet_chunksize = 50 #10_000
     num_workers = multiprocessing.cpu_count() - 2
 
-    def __init__(self, feature_vector_parquet: Path, workload_parquet_folder: Path, output_folder: Path):
+    def __init__(self, feature_vector_parquet: Path, workload_parquet_folder: Path, output_folder: Path, log_path: Path):
         self.output_folder = output_folder
+        self.log_path = log_path
         self.job_queue = multiprocessing.Queue()
         self.result_queue = multiprocessing.Queue()
         self.job_view = "job_view"
         self.con = duckdb.connect(database=':memory:')
         self.failed_jobs_file = self.output_folder / "failed_jobs.txt"
 
+        # create output folder if not exists
         os.makedirs(self.output_folder, exist_ok=True)
+
+        # create view on parquet input data to read from
         self.con.execute(f"""
             CREATE TEMPORARY VIEW {self.job_view} AS 
             SELECT * FROM '{workload_parquet_folder}/**/*.parquet'
         """)
 
+        # determine starting point of the job_counter
+        # job counter will be minimal job id that is not already worked on
         output_file_pattern = f'{output_folder}/**/*.parquet'
         if glob.glob(output_file_pattern):
             self.job_counter = self.con.execute(
@@ -59,18 +66,23 @@ class Testdriver:
                     SELECT MIN({Constants.ID})
                     FROM {self.job_view}
                 """).fetchone()[0]
+
+        # get amount of jobs
         self.job_count = self.con.execute(f"""SELECT COUNT(*) FROM {self.job_view}""").fetchone()[0]
+
+        # fill a dictionary with the provided feature vectors for quick access
         vectors = pq.read_table(feature_vector_parquet, schema=Schemas.Parquet.feature_vector).to_pylist()
         self.feature_vectors = {}
         for vector in vectors:
             self.feature_vectors[vector[Constants.PROBLEM_NAME]] = vector
 
-    # todo rotating logs
     class JobLogger:
-        def __init__(self, total_num_jobs: int):
+        def __init__(self, total_num_jobs: int, log_path: Path):
             logger = multiprocessing.get_logger()
             if not logger.hasHandlers():
-                handler = logging.FileHandler('testdriver.log')
+                # max 100 logs size 100MB = 10GB diskspace
+                handler = RotatingFileHandler(log_path / 'testdriver.log', maxBytes=100*1024*1024, backupCount=100)
+
                 formatter = logging.Formatter(
                     '%(asctime)s - %(levelname)s - %(threadName)s - Job %(job)s - %(progress)s%% - %(message)s'
                 )
@@ -86,7 +98,7 @@ class Testdriver:
             self.logger.log(level, message, extra=extra)
 
     def worker(self, queue_timeout):
-        logger = Testdriver.JobLogger(self.job_count)
+        logger = Testdriver.JobLogger(self.job_count, self.log_path)
 
         while True:
             try:
@@ -136,6 +148,8 @@ class Testdriver:
         """
         Jobs are loaded in chunks, because storing them all in memory would require to much ram.
         """
+        # todo will fail if job range of worked on jobs is not continuous (due to earlier errors)
+        # but can work with non continuous ranges if no output is already present
         loaded_in_this_batch = 0
         while self.job_counter < self.job_count and loaded_in_this_batch < Testdriver.job_loading_threshold:
 
@@ -210,7 +224,7 @@ class Testdriver:
 
 
     def run(self):
-        logger = Testdriver.JobLogger(self.job_count)
+        logger = Testdriver.JobLogger(self.job_count, self.log_path)
 
         self.probe(logger)
 
@@ -286,5 +300,11 @@ if __name__ == "__main__":
     feature_vector_parquet = Path("temp/vector.parquet")
     workload_parquet = Path("instances").resolve()
     result_parquet = Path(f"result").resolve()
-    testdriver = Testdriver(feature_vector_parquet=feature_vector_parquet, workload_parquet_folder=workload_parquet, output_folder=result_parquet)
+    testdriver = Testdriver(
+        feature_vector_parquet=feature_vector_parquet,
+        workload_parquet_folder=workload_parquet,
+        output_folder=result_parquet,
+        log_path=result_parquet
+    )
     testdriver.run()
+    temp_dir.cleanup()
