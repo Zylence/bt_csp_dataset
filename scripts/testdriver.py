@@ -8,6 +8,7 @@ import queue
 import tempfile
 import threading
 import time
+import zipfile
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from types import SimpleNamespace
@@ -27,7 +28,7 @@ class Testdriver:
 
     command_template = ' --solver gecode --json-stream --solver-statistics --input-from-stdin --input-is-flatzinc'
     job_loading_threshold = 100 #10_000
-    backup_threshold = 100 #5_000_000
+    backup_threshold = 50 #5_000_000
     result_parquet_chunksize = 50 #10_000
     num_workers = multiprocessing.cpu_count() - 2
 
@@ -224,7 +225,9 @@ class Testdriver:
                             partition_cols=[Constants.PROBLEM_NAME], existing_data_behavior="overwrite_or_ignore")
 
     def backup(self, filename: str):
-        shutil.make_archive(str(self.backup_path / filename), 'zip', self.output_folder)
+        with zipfile.ZipFile(str(self.backup_path / filename), 'w', zipfile.ZIP_DEFLATED) as zipf:
+            for file in glob.glob(f"{self.output_folder}/{Constants.PROBLEM_NAME}=*/*.parquet", recursive=True):
+                zipf.write(file, arcname=os.path.relpath(file, self.output_folder))
 
     def run(self):
         logger = Testdriver.JobLogger(self.job_count, self.log_path)
@@ -280,7 +283,7 @@ class Testdriver:
                 sorted_buffer = sorted_buffer[Testdriver.result_parquet_chunksize:]
 
             if processed_count % Testdriver.backup_threshold == 0:
-                self.backup(f"backup_{processed_count // Testdriver.backup_threshold}")
+                self.backup(f"backup_{processed_count // Testdriver.backup_threshold}.zip")
 
         if len(sorted_buffer) > 0:
             self.write_parquet(sorted_buffer, processed_count // Testdriver.result_parquet_chunksize, logger)
