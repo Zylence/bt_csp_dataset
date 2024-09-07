@@ -97,12 +97,12 @@ class Testdriver:
             extra = {'job': f"{job_name} {job}", 'progress': f"{progress:.2f}"}
             self.logger.log(level, message, extra=extra)
 
-    def worker(self, queue_timeout):
-        logger = Testdriver.JobLogger(self.job_count, self.log_path)
+    @staticmethod
+    def worker(job_queue, result_queue, feature_vectors: dict[Dict], logger, queue_timeout: int):
 
         while True:
             try:
-                job = self.job_queue.get(timeout=queue_timeout)
+                job = job_queue.get(timeout=queue_timeout)
             except queue.Empty:
                 break
 
@@ -111,7 +111,7 @@ class Testdriver:
                        f"Processing Variable Ordering {job[Constants.INSTANCE_PERMUTATION]}", job[Constants.PROBLEM_NAME])
 
             try:
-                associated_feature_vector = self.feature_vectors[job[Constants.PROBLEM_NAME]]
+                associated_feature_vector = feature_vectors[job[Constants.PROBLEM_NAME]]
                 mutated_zinc = FlatZincInstanceGenerator.substitute_variables(
                     associated_feature_vector[Constants.FLAT_ZINC], job[Constants.INSTANCE_PERMUTATION])
                 _, output = MinizincWrapper.run(Testdriver.command_template, stdin=mutated_zinc)
@@ -131,7 +131,7 @@ class Testdriver:
 
                     logger.log(logging.INFO, job_num, f"Backtracks: {data[Constants.FAILURES]}, SolveTime: {data[Constants.SOLVE_TIME]}", job[Constants.PROBLEM_NAME])
 
-                    self.result_queue.put(data)
+                    result_queue.put(data)
                     break
 
                 if not found_statistics:
@@ -140,7 +140,7 @@ class Testdriver:
             except Exception as e:
                 logger.log(logging.ERROR, job_num,
                            f"Validation Error: {e}", job[Constants.PROBLEM_NAME])
-                self.result_queue.put(job_num)  # communicates a job failure
+                result_queue.put(job_num)  # communicates a job failure
                 continue
 
 
@@ -178,15 +178,15 @@ class Testdriver:
             FROM {self.job_view}""")
 
         probe_rows = problem_samples.arrow().to_pylist()
-
+        result_queue = queue.Queue()
+        job_queue = queue.Queue()
         timings = {}
         for row in probe_rows:
             start = time.time()
 
-            # TODO sometimes this just hangs
-            self.job_queue.put_nowait(row)
-            self.worker(0)
-            _ = self.result_queue.get()
+            job_queue.put_nowait(row)
+            self.worker(job_queue, result_queue, self.feature_vectors, logger, 0)
+            _ = result_queue.get_nowait()
 
             indiv_t = time.time() - start
             logger.log(logging.INFO, 0, f"Probing 1 Job took {indiv_t}s", row[Constants.PROBLEM_NAME])
@@ -212,6 +212,9 @@ class Testdriver:
 
         logger.log(logging.INFO, 0, f"Estimated total {estimated_total_h}h time with {Testdriver.num_workers} workers.")
 
+    @staticmethod
+    def parquet_file_visitor(data):
+        pass
 
     def write_parquet(self, buffer: list[Dict]):
         table = pa.Table.from_pylist(buffer, schema=Schemas.Parquet.instance_results)
@@ -235,13 +238,13 @@ class Testdriver:
 
         processes = []
         for _ in range(Testdriver.num_workers):
-            fake_self = SimpleNamespace(
-                feature_vectors=self.feature_vectors,
-                job_queue=self.job_queue,
-                result_queue=self.result_queue,
-                job_count=self.job_count
-            )
-            p = threading.Thread(target=Testdriver.worker, args=(fake_self, 10)) # todo use executor service
+            p = threading.Thread(target=Testdriver.worker, kwargs={
+                "job_queue": self.job_queue,
+                "result_queue": self.result_queue,
+                "feature_vectors": self.feature_vectors,
+                "logger": logger,
+                "queue_timeout": 30}
+            ) # todo use executor service (maybe?)
             p.start()
             processes.append(p)
 
@@ -252,7 +255,7 @@ class Testdriver:
         processed_count = 0
         sorted_buffer = []
         while processed_count < self.job_count:
-            output = self.result_queue.get(timeout=10)
+            output = self.result_queue.get(timeout=60)
             processed_count += 1
 
             # check for failed job

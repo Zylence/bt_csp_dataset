@@ -1,5 +1,6 @@
 import logging
 import os
+import queue
 import unittest
 import multiprocessing
 import tempfile
@@ -29,7 +30,10 @@ class TestTestdriver(unittest.TestCase):
                         log_path=self.output_parquet
                         )
         td.load_next_job_batch()
-        td.worker(2)
+
+        job_queue = queue.Queue()
+        result_queue = queue.Queue()
+        td.worker(job_queue, result_queue, td.feature_vectors, Testdriver.JobLogger(td.job_count, self.output_parquet), 2)
 
         results = []
         while not td.result_queue.empty():
