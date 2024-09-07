@@ -129,7 +129,7 @@ class Testdriver:
                     except:
                         continue
 
-                    data[Constants.INSTANCE_PERMUTATION] = "|".join(job[Constants.INSTANCE_PERMUTATION])
+                    data[Constants.INSTANCE_PERMUTATION] = job[Constants.INSTANCE_PERMUTATION]
                     data[Constants.PROBLEM_NAME] = job[Constants.PROBLEM_NAME]
                     data[Constants.ID] = job_num
 

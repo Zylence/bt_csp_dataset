@@ -76,7 +76,7 @@ class Schemas:
         __irs = [
             pa.field(Constants.PROBLEM_NAME, pa.string(), nullable=False),
             pa.field(Constants.ID, pa.int64(), nullable=False),
-            pa.field(Constants.INSTANCE_PERMUTATION, pa.string(), nullable=False),
+            pa.field(Constants.INSTANCE_PERMUTATION, pa.list_(pa.string()), nullable=False),
             pa.field(Constants.INIT_TIME, pa.float64(), nullable=False),
             pa.field(Constants.SOLVE_TIME, pa.float64(), nullable=False),
             pa.field(Constants.SOLUTIONS, pa.int32(), nullable=False),
