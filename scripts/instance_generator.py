@@ -1,4 +1,7 @@
+import bisect
 import math
+import multiprocessing
+import threading
 from pathlib import Path
 from typing import Dict
 
@@ -19,11 +22,15 @@ class FlatZincInstanceGenerator:
     command_template = ' --json-stream --model-check-only --input-from-stdin --input-is-flatzinc'
     result_buffer_size = 100_000
 
+    factorials = {}
+    for i in range(0, 1000):
+        factorials[i] = math.factorial(i)
+
     def __init__(self, feature_vector_parquet_input_file: Path, instances_parquet_output: Path, max_vars: int):
         self.reader = pq.ParquetReader()
         self.reader.open(feature_vector_parquet_input_file)
         self.output_folder = instances_parquet_output
-        self.max_vars = max_vars
+        self.max_vars = max_vars #3_628_800
 
     def probe(self):
         rows = self.reader.read_all().select([Constants.PROBLEM_NAME, Constants.FLAT_ZINC]).to_pylist()
@@ -128,8 +135,57 @@ class FlatZincInstanceGenerator:
         return []
 
     @staticmethod
-    def generate_permutations(variables):
-        return list(itertools.permutations(variables))
+    def generate_nth_permutation(elements, n):
+        """
+        :param elements: List of elements to permute
+        :param n: The permutation index (0-based)
+        :return: The nth permutation as a list
+        """
+        permutation = []
+        cpy = elements.copy()
+        while cpy:
+            factorial = FlatZincInstanceGenerator.factorials[len(cpy) - 1]
+            index = n // factorial  # Determine the index of the element to place
+            permutation.append(cpy.pop(index))  # Append result and remove element from cpy to avoid choosing it again
+            n %= factorial  # Update n to reflect remaining permutations
+
+        return permutation
+
+    @staticmethod
+    def generate_range_of_permutations(vars, start, stop, step, queue):
+
+        result_list = []
+        for perm_position in range(start, stop, step):
+            nth_permutation = FlatZincInstanceGenerator.generate_nth_permutation(vars, perm_position)
+            result_list.append(nth_permutation)
+        queue.put((start, result_list))
+
+    def generate_permutations(self, variables):
+        perm_count = FlatZincInstanceGenerator.factorials[len(variables)]
+        num_computable_perms = min(self.max_vars, perm_count)
+        workers = multiprocessing.cpu_count()
+        chunk_size = perm_count // workers
+        stepsize = perm_count // num_computable_perms
+        queue = multiprocessing.Queue()
+
+        for worker in range(0, workers):
+            t = multiprocessing.Process(target=FlatZincInstanceGenerator.generate_range_of_permutations, args=(
+            variables, worker * chunk_size, (worker + 1) * chunk_size, stepsize, queue))
+            t.start()
+
+        remaining = perm_count % workers
+        if remaining > 0:
+            workers += 1
+            FlatZincInstanceGenerator.generate_range_of_permutations(variables, perm_count - remaining, perm_count, stepsize, queue)
+
+        result_list = [None] * num_computable_perms
+        processed = 0
+        while processed < workers:
+            start, chunk = queue.get()
+            result_list[start:start + len(chunk)] = chunk
+            processed += 1
+
+        return result_list
 
     @staticmethod
     def substitute_variables(fzn_content: str, variables: list[str]) -> str:
