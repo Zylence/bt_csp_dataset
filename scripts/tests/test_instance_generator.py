@@ -58,7 +58,7 @@ class TestFlatZincInstanceGenerator(unittest.TestCase):
 
     def test_permutation_generation_against_itertools(self):
         """
-        Testing instance generation against itertools result.
+        Testing instance generation against filtered itertools result.
         We can not use lists larger than 10 here (because of itertools)
         """
         test_cases = [
@@ -81,6 +81,25 @@ class TestFlatZincInstanceGenerator(unittest.TestCase):
                 actual_vars = self.generator.generate_permutations(variables)
                 for av, ev in zip(actual_vars, expected_permutations):
                     self.assertEqual(av, ev)
+
+    def test_permutation_generation_with_large_values(self):
+        """
+        Ensure the instance generation can run with larger lists.
+        This would not be possible with itertools for both memory and processing reasons
+        """
+
+        test_cases = [
+            (list(range(0, 50, 1)), math.factorial(10)),    # every 10! th permutation for a total of 10! permutations
+            (list(range(0, 100, 1)), math.factorial(10)),   # every 10! th permutation for a total of 10! permutations
+            (list(range(0, 999, 1)), 100)                  # every 1000! / 100 -th permutation for a total of 100 permutations
+        ]
+
+        for variables, max_vars in test_cases:
+            with self.subTest(variables=variables):
+                self.generator.max_vars = max_vars
+                actual_vars = self.generator.generate_permutations(variables)
+                self.assertEqual(len(actual_vars), max_vars)
+                self.assertEqual(variables, actual_vars[0])
 
     def test_substitute_variables(self):
         test_cases = [
