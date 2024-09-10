@@ -1,14 +1,11 @@
-import bisect
 import math
 import multiprocessing
-import threading
 from pathlib import Path
 from typing import Dict
 
 import pyarrow as pa
 import pyarrow.parquet as pq
 import re
-import itertools
 
 from minizinc_wrapper import MinizincWrapper
 from schemas import Constants, Schemas
@@ -163,26 +160,35 @@ class FlatZincInstanceGenerator:
     def generate_permutations(self, variables):
         perm_count = FlatZincInstanceGenerator.factorials[len(variables)]
         num_computable_perms = min(self.max_vars, perm_count)
-        workers = multiprocessing.cpu_count()
+        workers = min(multiprocessing.cpu_count() - 1, self.max_vars)
         chunk_size = perm_count // workers
         stepsize = perm_count // num_computable_perms
         queue = multiprocessing.Queue()
 
         for worker in range(0, workers):
-            t = multiprocessing.Process(target=FlatZincInstanceGenerator.generate_range_of_permutations, args=(
-            variables, worker * chunk_size, (worker + 1) * chunk_size, stepsize, queue))
-            t.start()
 
-        remaining = perm_count % workers
-        if remaining > 0:
-            workers += 1
-            FlatZincInstanceGenerator.generate_range_of_permutations(variables, perm_count - remaining, perm_count, stepsize, queue)
+            start = worker * chunk_size
+
+            if worker < workers - 1:
+                stop = (worker + 1) * chunk_size
+            else:
+                stop = perm_count
+
+            # make sure the first element in range is actually divisible by stepsize because its always calculated
+            remainder = start % stepsize
+            add = (stepsize - remainder) % stepsize
+            start += add
+
+            p = multiprocessing.Process(target=FlatZincInstanceGenerator.generate_range_of_permutations, args=(
+                variables, start, stop, stepsize, queue))
+            p.start()
 
         result_list = [None] * num_computable_perms
         processed = 0
         while processed < workers:
             start, chunk = queue.get()
-            result_list[start:start + len(chunk)] = chunk
+            start_index = start // stepsize
+            result_list[start_index:start_index + len(chunk)] = chunk
             processed += 1
 
         return result_list
@@ -210,5 +216,5 @@ class FlatZincInstanceGenerator:
             return fzn_content
 
 if __name__ == "__main__":
-    generator = FlatZincInstanceGenerator(Path("temp/vector.parquet").resolve(), Path("instances").resolve(), 10)
+    generator = FlatZincInstanceGenerator(Path("temp/vector.parquet").resolve(), Path("instances").resolve(), 100)
     generator.run()
