@@ -79,6 +79,9 @@ class Testdriver:
         self.feature_vectors = {}
         for vector in vectors:
             self.feature_vectors[vector[Constants.PROBLEM_NAME]] = vector
+            # todo decide if this next step should happen during feature extraction?
+            vector[Constants.FLAT_ZINC] = FlatZincInstanceGenerator.ensure_input_order_annotation(vector[Constants.FLAT_ZINC])
+
 
     class JobLogger:
         def __init__(self, total_num_jobs: int, log_path: Path):
@@ -315,7 +318,7 @@ if __name__ == "__main__":
         workload_parquet_folder=workload_parquet,
         output_folder=result_parquet,
         backup_path=backups,
-        log_path=result_parquet
+        log_path=backups,
     )
     testdriver.run()
     temp_dir.cleanup()

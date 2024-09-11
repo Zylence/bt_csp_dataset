@@ -13,6 +13,7 @@ from schemas import Constants, Schemas
 
 class FlatZincInstanceGenerator:
     int_search_pattern = re.compile(r"solve\s*::\s*int_search\s*\(\s*(\[\s*.*?\s*\]|\w+)\s*,", re.DOTALL)
+    int_search_pattern_extended = re.compile(r"(.*solve\s*::\s*int_search\s*\()(\s*\[\s*.*?\s*\]|\w+),(\w+),(.*)", re.DOTALL)
     array_declaration_pattern = re.compile(r"array\s*\[\d+\.\.\d+\]\s*of\s*var\s*int:\s*(\w+)\s*=\s*(\[.*?\]);",
                                            re.DOTALL)
     vars_array_pattern = re.compile(r'\b[\w\[\]]+\b')
@@ -23,11 +24,12 @@ class FlatZincInstanceGenerator:
     for i in range(0, 1000):
         factorials[i] = math.factorial(i)
 
-    def __init__(self, feature_vector_parquet_input_file: Path, instances_parquet_output: Path, max_vars: int):
+    def __init__(self, feature_vector_parquet_input_file: Path, instances_parquet_output: Path, targeted_vars: int, cutoff_excess: bool = False):
         self.reader = pq.ParquetReader()
         self.reader.open(feature_vector_parquet_input_file)
         self.output_folder = instances_parquet_output
-        self.max_vars = max_vars #3_628_800
+        self.max_vars = targeted_vars   # amount of vars aimed at. If its required to constrain to this exact amount set cutoff_excess
+        self.cutoff_excess_vars = cutoff_excess
 
     def probe(self):
         rows = self.reader.read_all().select([Constants.PROBLEM_NAME, Constants.FLAT_ZINC]).to_pylist()
@@ -40,8 +42,12 @@ class FlatZincInstanceGenerator:
             new_var_ordering = variables.copy()
             new_var_ordering.reverse()
 
-            new_zinc = FlatZincInstanceGenerator.substitute_variables(row[Constants.FLAT_ZINC], new_var_ordering)
+            new_zinc = FlatZincInstanceGenerator.ensure_input_order_annotation(row[Constants.FLAT_ZINC])
+            new_zinc = FlatZincInstanceGenerator.substitute_variables(new_zinc, new_var_ordering)
             print(f"Generated new flatzinc with variable ordering {new_var_ordering}")
+
+            if not "input_order" in new_zinc:
+                raise Exception("FlatZinc does not use input ordering.")
 
             code, stdout = MinizincWrapper.run(FlatZincInstanceGenerator.command_template, stdin=new_zinc)
             if code != 0:
@@ -164,20 +170,23 @@ class FlatZincInstanceGenerator:
         chunk_size = perm_count // workers
         stepsize = perm_count // num_computable_perms
         queue = multiprocessing.Queue()
+        variables.sort()
 
         for worker in range(0, workers):
 
             start = worker * chunk_size
-
-            if worker < workers - 1:
-                stop = (worker + 1) * chunk_size
-            else:
-                stop = perm_count
-
             # make sure the first element in range is actually divisible by stepsize because its always calculated
             remainder = start % stepsize
             add = (stepsize - remainder) % stepsize
             start += add
+
+            if worker < workers - 1:
+                stop = (worker + 1) * chunk_size
+            else:
+                if self.cutoff_excess_vars:
+                    stop = stepsize * num_computable_perms  # does not generate more than max_vars
+                else:
+                    stop = perm_count  # fills the slight gap that may exist at the end due to information loss through rounding of stepsize
 
             p = multiprocessing.Process(target=FlatZincInstanceGenerator.generate_range_of_permutations, args=(
                 variables, start, stop, stepsize, queue))
@@ -214,6 +223,10 @@ class FlatZincInstanceGenerator:
             array_pattern = re.compile(rf"({re.escape(array_or_var)}[^;]*=\s*)(\[.*?\])(;)", re.DOTALL)
             fzn_content = array_pattern.sub(rf"\1{variables_str}\3", fzn_content)
             return fzn_content
+
+    @staticmethod
+    def ensure_input_order_annotation(fzn_content: str) -> str:
+        return FlatZincInstanceGenerator.int_search_pattern_extended.sub(rf"\1\2,{'input_order'},\4", fzn_content.replace("\n", ""))
 
 if __name__ == "__main__":
     generator = FlatZincInstanceGenerator(Path("temp/vector.parquet").resolve(), Path("instances").resolve(), 100)

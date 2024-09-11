@@ -20,7 +20,7 @@ class TestFlatZincInstanceGenerator(unittest.TestCase):
         self.generator = FlatZincInstanceGenerator(
             feature_vector_parquet_input_file=input_file,
             instances_parquet_output=self.output_path,
-            max_vars=10
+            targeted_vars=10
         )
 
     def tearDown(self):
@@ -75,6 +75,7 @@ class TestFlatZincInstanceGenerator(unittest.TestCase):
         ]
 
         for variables, max_vars in test_cases:
+            variables.sort()
             expected_permutations = TestFlatZincInstanceGenerator.nt_permutation_itertools_helper(variables, max_vars)
             with self.subTest(variables=variables):
                 self.generator.max_vars = max_vars
@@ -85,9 +86,8 @@ class TestFlatZincInstanceGenerator(unittest.TestCase):
     def test_permutation_generation_with_large_values(self):
         """
         Ensure the instance generation can run with larger lists.
-        This would not be possible with itertools for both memory and processing reasons
         """
-
+        # This would not be possible with itertools for both memory and processing reasons
         test_cases = [
             (list(range(0, 50, 1)), math.factorial(10)),    # every 10! th permutation for a total of 10! permutations
             (list(range(0, 100, 1)), math.factorial(10)),   # every 10! th permutation for a total of 10! permutations
@@ -100,6 +100,19 @@ class TestFlatZincInstanceGenerator(unittest.TestCase):
                 actual_vars = self.generator.generate_permutations(variables)
                 self.assertEqual(len(actual_vars), max_vars)
                 self.assertEqual(variables, actual_vars[0])
+
+    def test_search_annoation_substitution(self):
+        test_cases = [
+            ("""constraint int_lin_eq([1,-1,-1],[X_INTRODUCED_21_,X_INTRODUCED_20_,X_INTRODUCED_32_],0):: defines_var(X_INTRODUCED_32_);solve :: int_search(mark,first_fail,indomain,complete) minimize X_INTRODUCED_21_;""",
+             """constraint int_lin_eq([1,-1,-1],[X_INTRODUCED_21_,X_INTRODUCED_20_,X_INTRODUCED_32_],0):: defines_var(X_INTRODUCED_32_);solve :: int_search(mark,input_order,indomain,complete) minimize X_INTRODUCED_21_;"""),
+            ("""solve :: int_search([X_INTRODUCED_17_,X_INTRODUCED_18_,X_INTRODUCED_19_,X_INTRODUCED_20_,X_INTRODUCED_21_,X_INTRODUCED_22_,X_INTRODUCED_23_,X_INTRODUCED_24_,X_INTRODUCED_25_,X_INTRODUCED_26_],max_regret,indomain_min,complete) satisfy;""",
+             """solve :: int_search([X_INTRODUCED_17_,X_INTRODUCED_18_,X_INTRODUCED_19_,X_INTRODUCED_20_,X_INTRODUCED_21_,X_INTRODUCED_22_,X_INTRODUCED_23_,X_INTRODUCED_24_,X_INTRODUCED_25_,X_INTRODUCED_26_],input_order,indomain_min,complete) satisfy;""")
+        ]
+
+        for fzn, expected_fzn in test_cases:
+            with self.subTest(fzn_content=fzn):
+                actual = FlatZincInstanceGenerator.ensure_input_order_annotation(fzn)
+                self.assertEqual(actual, expected_fzn)
 
     def test_substitute_variables(self):
         test_cases = [
