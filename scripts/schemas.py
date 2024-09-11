@@ -5,7 +5,8 @@ from jsonschema.validators import validate
 
 
 class Constants:
-    PROBLEM_NAME = "problemName"
+    PROBLEM_ID = "problemId"
+    MODEL_NAME = "modelName"
     FEATURE_VECTOR = "feature_vector"
 
     FLAT_BOOL_VARS = "flatBoolVars"
@@ -51,7 +52,8 @@ class Constants:
 class Schemas:
     class Parquet:
         feature_vector: pa.Schema = pa.schema([
-            pa.field(Constants.PROBLEM_NAME, pa.string(), False),     # this property does not exist in json feature vector
+            pa.field(Constants.PROBLEM_ID, pa.string(), False),
+            pa.field(Constants.MODEL_NAME, pa.string(), False),     # this property does not exist in json feature vector
             pa.field(Constants.FLAT_BOOL_VARS, pa.int32(), False),
             pa.field(Constants.FLAT_INT_VARS, pa.int32(), False),
             pa.field(Constants.FLAT_SET_VARS, pa.int32(), False),
@@ -74,7 +76,7 @@ class Schemas:
         ])
 
         __irs = [
-            pa.field(Constants.PROBLEM_NAME, pa.string(), nullable=False),
+            pa.field(Constants.MODEL_NAME, pa.string(), nullable=False),
             pa.field(Constants.ID, pa.int64(), nullable=False),
             pa.field(Constants.INSTANCE_PERMUTATION, pa.list_(pa.string()), nullable=False),
             pa.field(Constants.INIT_TIME, pa.float64(), nullable=False),
@@ -99,7 +101,7 @@ class Schemas:
 
         instances: pa.Schema = pa.schema(
             [
-                pa.field(Constants.PROBLEM_NAME, pa.string(), False),
+                pa.field(Constants.MODEL_NAME, pa.string(), False),
                 pa.field(Constants.ID, pa.int64(), False),
                 pa.field(Constants.INSTANCE_PERMUTATION, pa.list_(pa.string()), False),
             ]

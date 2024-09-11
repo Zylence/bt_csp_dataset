@@ -22,6 +22,8 @@ if __name__ == '__main__':
 
     ]
 
+    input_files = FeatureVectorExtractor.input_format_helper(Path("F:/Downloads/Problems").resolve())
+
     parquet_file = Path('temp/vector.parquet').resolve()
     extractor = FeatureVectorExtractor(input_files, parquet_file)
     extractor.run()

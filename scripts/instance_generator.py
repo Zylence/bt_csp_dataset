@@ -32,9 +32,9 @@ class FlatZincInstanceGenerator:
         self.cutoff_excess_vars = cutoff_excess
 
     def probe(self):
-        rows = self.reader.read_all().select([Constants.PROBLEM_NAME, Constants.FLAT_ZINC]).to_pylist()
+        rows = self.reader.read_all().select([Constants.MODEL_NAME, Constants.FLAT_ZINC]).to_pylist()
         for row in rows:
-            print(f"Probing {row[Constants.PROBLEM_NAME]}")
+            print(f"Probing {row[Constants.MODEL_NAME]}")
             variables = FlatZincInstanceGenerator.extract_variables(row[Constants.FLAT_ZINC])
             if len(variables) == 0:
                 print(f"WARN No variables could be extracted flatzinc \n {row[Constants.FLAT_ZINC]}")
@@ -59,10 +59,10 @@ class FlatZincInstanceGenerator:
             if new_var_ordering_extracted != new_var_ordering:
                 print(f"WARN Instance generation sanity check failed")
             else:
-                print(f"Instance generation successful for {row[Constants.PROBLEM_NAME]}")
+                print(f"Instance generation successful for {row[Constants.MODEL_NAME]}")
 
     def run(self):
-        rows = self.reader.read_all().select([Constants.PROBLEM_NAME, Constants.FLAT_ZINC])
+        rows = self.reader.read_all().select([Constants.MODEL_NAME, Constants.FLAT_ZINC])
 
         self.probe()
 
@@ -83,7 +83,7 @@ class FlatZincInstanceGenerator:
                 ordering_lst = list(ordering)
 
                 buffer.append({
-                    Constants.PROBLEM_NAME: problem_id,
+                    Constants.MODEL_NAME: problem_id,
                     Constants.ID: id,
                     Constants.INSTANCE_PERMUTATION: ordering_lst,
                 })
@@ -103,7 +103,7 @@ class FlatZincInstanceGenerator:
         table = pa.Table.from_pylist(buffer, schema=Schemas.Parquet.instances)
         pq.write_to_dataset(table, root_path=self.output_folder, use_threads=True,
                             schema=Schemas.Parquet.instances,
-                            partition_cols=[Constants.PROBLEM_NAME], existing_data_behavior="overwrite_or_ignore")
+                            partition_cols=[Constants.MODEL_NAME], existing_data_behavior="overwrite_or_ignore")
 
     """
     Returns the list of variables extracted from the int_search annotation. 

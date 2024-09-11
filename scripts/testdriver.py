@@ -78,7 +78,7 @@ class Testdriver:
         vectors = pq.read_table(feature_vector_parquet, schema=Schemas.Parquet.feature_vector).to_pylist()
         self.feature_vectors = {}
         for vector in vectors:
-            self.feature_vectors[vector[Constants.PROBLEM_NAME]] = vector
+            self.feature_vectors[vector[Constants.MODEL_NAME]] = vector
             # todo decide if this next step should happen during feature extraction?
             vector[Constants.FLAT_ZINC] = FlatZincInstanceGenerator.ensure_input_order_annotation(vector[Constants.FLAT_ZINC])
 
@@ -115,10 +115,10 @@ class Testdriver:
 
             job_num = job[Constants.ID]
             logger.log(logging.DEBUG, job_num,
-                       f"Processing Variable Ordering {job[Constants.INSTANCE_PERMUTATION]}", job[Constants.PROBLEM_NAME])
+                       f"Processing Variable Ordering {job[Constants.INSTANCE_PERMUTATION]}", job[Constants.MODEL_NAME])
 
             try:
-                associated_feature_vector = feature_vectors[job[Constants.PROBLEM_NAME]]
+                associated_feature_vector = feature_vectors[job[Constants.MODEL_NAME]]
                 mutated_zinc = FlatZincInstanceGenerator.substitute_variables(
                     associated_feature_vector[Constants.FLAT_ZINC], job[Constants.INSTANCE_PERMUTATION])
                 _, output = MinizincWrapper.run(Testdriver.command_template, stdin=mutated_zinc)
@@ -133,10 +133,10 @@ class Testdriver:
                         continue
 
                     data[Constants.INSTANCE_PERMUTATION] = job[Constants.INSTANCE_PERMUTATION]
-                    data[Constants.PROBLEM_NAME] = job[Constants.PROBLEM_NAME]
+                    data[Constants.MODEL_NAME] = job[Constants.MODEL_NAME]
                     data[Constants.ID] = job_num
 
-                    logger.log(logging.INFO, job_num, f"Backtracks: {data[Constants.FAILURES]}, SolveTime: {data[Constants.SOLVE_TIME]}", job[Constants.PROBLEM_NAME])
+                    logger.log(logging.INFO, job_num, f"Backtracks: {data[Constants.FAILURES]}, SolveTime: {data[Constants.SOLVE_TIME]}", job[Constants.MODEL_NAME])
 
                     result_queue.put(data)
                     break
@@ -146,7 +146,7 @@ class Testdriver:
 
             except Exception as e:
                 logger.log(logging.ERROR, job_num,
-                           f"Validation Error: {e}", job[Constants.PROBLEM_NAME])
+                           f"Validation Error: {e}", job[Constants.MODEL_NAME])
                 result_queue.put(job_num)  # communicates a job failure
                 continue
 
@@ -181,7 +181,7 @@ class Testdriver:
         # ov every problem fetch one row (one instance)
         problem_samples = self.con.execute(
             f"""SELECT 
-            DISTINCT ON({Constants.PROBLEM_NAME}) {Constants.PROBLEM_NAME}, {Constants.ID}, {Constants.INSTANCE_PERMUTATION} 
+            DISTINCT ON({Constants.MODEL_NAME}) {Constants.MODEL_NAME}, {Constants.ID}, {Constants.INSTANCE_PERMUTATION} 
             FROM {self.job_view}""")
 
         probe_rows = problem_samples.arrow().to_pylist()
@@ -196,16 +196,16 @@ class Testdriver:
             _ = result_queue.get_nowait()
 
             indiv_t = time.time() - start
-            logger.log(logging.INFO, 0, f"Probing 1 Job took {indiv_t}s", row[Constants.PROBLEM_NAME])
+            logger.log(logging.INFO, 0, f"Probing 1 Job took {indiv_t}s", row[Constants.MODEL_NAME])
 
             # get the number of jobs for this problem
             problem_count = self.con.execute(f"""
                 SELECT COUNT(*)
                 FROM {self.job_view}
-                WHERE {Constants.PROBLEM_NAME} = '{row[Constants.PROBLEM_NAME]}'
+                WHERE {Constants.MODEL_NAME} = '{row[Constants.MODEL_NAME]}'
             """).arrow().to_pydict()["count_star()"][0]
 
-            timings[row[Constants.PROBLEM_NAME]] = (indiv_t, problem_count)
+            timings[row[Constants.MODEL_NAME]] = (indiv_t, problem_count)
 
         total_t = sum([i for i, _ in timings.values()])
         logger.log(logging.INFO, 0, f"Probing {len(probe_rows)} Jobs took {total_t}s")
@@ -227,12 +227,12 @@ class Testdriver:
                             schema=Schemas.Parquet.instance_results,
                             file_visitor=lambda x: logger.log(logging.INFO, 0, f"Parquet Writer touched {x.path}"),
                             basename_template=f"part_{{i}}{num}_{datetime.datetime.now():%H-%M-%S-%f}.parquet",  #  {{i}} must be included...
-                            partition_cols=[Constants.PROBLEM_NAME],
+                            partition_cols=[Constants.MODEL_NAME],
                             existing_data_behavior="overwrite_or_ignore")
 
     def backup(self, filename: str):
         with zipfile.ZipFile(str(self.backup_path / filename), 'w', zipfile.ZIP_DEFLATED) as zipf:
-            for file in glob.glob(f"{self.output_folder}/{Constants.PROBLEM_NAME}=*/*.parquet", recursive=True):
+            for file in glob.glob(f"{self.output_folder}/{Constants.MODEL_NAME}=*/*.parquet", recursive=True):
                 zipf.write(file, arcname=os.path.relpath(file, self.output_folder))
 
     def run(self):
