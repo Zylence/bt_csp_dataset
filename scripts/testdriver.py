@@ -191,6 +191,7 @@ class Testdriver:
         for row in probe_rows:
             start = time.time()
 
+            logger.log(logging.INFO, 0, f"Probing Preparation", row[Constants.MODEL_NAME])
             job_queue.put_nowait(row)
             self.worker(job_queue, result_queue, self.feature_vectors, logger, 0)
             _ = result_queue.get_nowait()
@@ -240,7 +241,7 @@ class Testdriver:
 
         self.probe(logger)
 
-        logger.log(logging.INFO, self.job_counter, "Filling Job Queue with first Batch")
+        logger.log(logging.INFO, 0, "Filling Job Queue with first Batch")
         self.load_next_job_batch()
 
         logger.log(logging.INFO, 0, f"Processing will start using {Testdriver.num_workers} workers.")
@@ -309,7 +310,7 @@ class Testdriver:
 
 if __name__ == "__main__":
     temp_dir = tempfile.TemporaryDirectory()
-    feature_vector_parquet = Path("temp/vector.parquet")
+    feature_vector_parquet = Path("temp/vector_big.parquet")
     workload_parquet = Path("instances").resolve()
     result_parquet = Path(f"result").resolve()
     backups = Path(f"backups").resolve()
