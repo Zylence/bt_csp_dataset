@@ -81,14 +81,14 @@ class Schemas:
             pa.field(Constants.INSTANCE_PERMUTATION, pa.list_(pa.string()), nullable=False),
             pa.field(Constants.INIT_TIME, pa.float64(), nullable=False),
             pa.field(Constants.SOLVE_TIME, pa.float64(), nullable=False),
-            pa.field(Constants.SOLUTIONS, pa.int32(), nullable=False),
-            pa.field(Constants.VARIABLES, pa.int32(), nullable=False),
-            pa.field(Constants.PROPAGATORS, pa.int32(), nullable=False),
-            pa.field(Constants.PROPAGATIONS, pa.int32(), nullable=False),
-            pa.field(Constants.NODES, pa.int32(), nullable=False),
-            pa.field(Constants.FAILURES, pa.int32(), nullable=False),
-            pa.field(Constants.RESTARTS, pa.int32(), nullable=False),
-            pa.field(Constants.PEAK_DEPTH, pa.int32(), nullable=False),
+            pa.field(Constants.SOLUTIONS, pa.int64(), nullable=False),
+            pa.field(Constants.VARIABLES, pa.int64(), nullable=False),
+            pa.field(Constants.PROPAGATORS, pa.int64(), nullable=False),
+            pa.field(Constants.PROPAGATIONS, pa.int64(), nullable=False),
+            pa.field(Constants.NODES, pa.int64(), nullable=False),
+            pa.field(Constants.FAILURES, pa.int64(), nullable=False),
+            pa.field(Constants.RESTARTS, pa.int64(), nullable=False),
+            pa.field(Constants.PEAK_DEPTH, pa.int64(), nullable=False),
         ]
 
         # struct
