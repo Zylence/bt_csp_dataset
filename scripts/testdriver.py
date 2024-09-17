@@ -5,6 +5,7 @@ import logging
 import multiprocessing
 import os
 import queue
+import sys
 import tempfile
 import threading
 import time
@@ -27,10 +28,10 @@ from schemas import Helpers, Schemas, Constants
 class Testdriver:
 
     command_template = ' --solver gecode --json-stream --solver-statistics --input-from-stdin --input-is-flatzinc'
-    job_loading_threshold = 100 #10_000
-    backup_threshold = 50 #5_000_000
-    result_parquet_chunksize = 50 #10_000
-    num_workers = multiprocessing.cpu_count() - 2
+    job_loading_threshold = 50 #10_000
+    backup_threshold = 100000 #5_000_000
+    result_parquet_chunksize = 1000 #10_000
+    num_workers = multiprocessing.cpu_count()
 
     def __init__(self, feature_vector_parquet: Path, workload_parquet_folder: Path, output_folder: Path, log_path: Path, backup_path: Path):
         self.output_folder = output_folder
@@ -85,7 +86,7 @@ class Testdriver:
 
     class JobLogger:
         def __init__(self, total_num_jobs: int, log_path: Path):
-            logger = multiprocessing.get_logger()
+            logger = logging.getLogger("JobLogger")
             if not logger.hasHandlers():
                 # max 100 logs size 100MB = 10GB diskspace
                 handler = RotatingFileHandler(log_path / 'testdriver.log', maxBytes=100*1024*1024, backupCount=100)
@@ -95,7 +96,13 @@ class Testdriver:
                 )
                 handler.setFormatter(formatter)
                 logger.addHandler(handler)
-                logger.setLevel(logging.INFO)
+
+                console_handler = logging.StreamHandler(sys.stdout)
+                console_handler.setLevel(logging.DEBUG)
+                console_handler.setFormatter(formatter)
+                logger.addHandler(console_handler)
+
+                logger.setLevel(logging.DEBUG) # in prod set info
             self.logger = logger
             self.total_jobs = total_num_jobs
 
@@ -105,12 +112,13 @@ class Testdriver:
             self.logger.log(level, message, extra=extra)
 
     @staticmethod
-    def worker(job_queue, result_queue, feature_vectors: dict[Dict], logger, queue_timeout: int):
+    def worker(job_queue, result_queue, feature_vectors: dict[Dict], logger: JobLogger, queue_timeout: int):
 
         while True:
             try:
                 job = job_queue.get(timeout=queue_timeout)
             except queue.Empty:
+                logger.log(logging.DEBUG, 0, "Empty Queue - Worker is exiting.")
                 break
 
             job_num = job[Constants.ID]
@@ -130,6 +138,7 @@ class Testdriver:
                         data = Helpers.json_to_solution_statistics_dict(o)
                         found_statistics = True
                     except:
+                        # intended behaviour
                         continue
 
                     data[Constants.INSTANCE_PERMUTATION] = job[Constants.INSTANCE_PERMUTATION]
@@ -151,12 +160,13 @@ class Testdriver:
                 continue
 
 
-    def load_next_job_batch(self):
+    def load_next_job_batch(self, logger):
         """
         Jobs are loaded in chunks, because storing them all in memory would require to much ram.
         """
         # todo will fail if job range of worked on jobs is not continuous (due to earlier errors)
         # but can work with non continuous ranges if no output is already present
+        logger.log(logging.DEBUG, 0, f"About to load new jobs. Current QSize {self.job_queue.qsize()}")
         loaded_in_this_batch = 0
         while self.job_counter < self.job_count and loaded_in_this_batch < Testdriver.job_loading_threshold:
 
@@ -170,6 +180,8 @@ class Testdriver:
             for job in jobs:
                 self.job_queue.put(job)
             self.job_counter += loaded_in_this_batch
+
+        logger.log(logging.DEBUG, 0, f"Attempted loading new Jobs. New QSize {self.job_queue.qsize()}")
 
     def probe(self, logger: JobLogger):
         """
@@ -242,7 +254,7 @@ class Testdriver:
         self.probe(logger)
 
         logger.log(logging.INFO, 0, "Filling Job Queue with first Batch")
-        self.load_next_job_batch()
+        self.load_next_job_batch(logger)
 
         logger.log(logging.INFO, 0, f"Processing will start using {Testdriver.num_workers} workers.")
 
@@ -265,8 +277,12 @@ class Testdriver:
         processed_count = 0
         sorted_buffer = []
         while processed_count < self.job_count:
-            output = self.result_queue.get(timeout=60)
-            processed_count += 1
+
+            try:
+                output = self.result_queue.get(timeout=60)
+                processed_count += 1
+            except queue.Empty:
+                continue
 
             # check for failed job
             if isinstance(output, int):
@@ -276,9 +292,8 @@ class Testdriver:
             else:
                 bisect.insort(sorted_buffer, output, key=sort_by)
 
-            if processed_count % Testdriver.job_loading_threshold == 0:
-                self.load_next_job_batch()
-                logger.log(logging.INFO, 0, f"Loaded new batch of jobs.")
+            if self.job_queue.qsize() < Testdriver.job_loading_threshold:
+                self.load_next_job_batch(logger)
 
             # When the buffer is slightly larger than the chunksize we write we flush to disk
             # This way we will most likely be flushing fully sorted rows.
@@ -309,8 +324,7 @@ class Testdriver:
 
 
 if __name__ == "__main__":
-    temp_dir = tempfile.TemporaryDirectory()
-    feature_vector_parquet = Path("temp/vector_big.parquet")
+    feature_vector_parquet = Path("temp/vector_big_2.parquet")
     workload_parquet = Path("instances").resolve()
     result_parquet = Path(f"result").resolve()
     backups = Path(f"backups").resolve()
@@ -322,4 +336,3 @@ if __name__ == "__main__":
         log_path=backups,
     )
     testdriver.run()
-    temp_dir.cleanup()
