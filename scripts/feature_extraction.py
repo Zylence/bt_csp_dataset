@@ -1,6 +1,8 @@
+import multiprocessing
 import os
 import re
 import tempfile
+import threading
 from pathlib import Path
 
 from minizinc_wrapper import MinizincWrapper
@@ -14,20 +16,23 @@ a parquet file.
 """
 class FeatureVectorExtractor:
 
+    semaphore = threading.Semaphore(multiprocessing.cpu_count())
+
     def __init__(self, input_files: (str, list[Path]), parquet_output_file: Path):
         self.input_files = input_files
         self.parquet_output = parquet_output_file
         self.writer = pq.ParquetWriter(parquet_output_file, schema=Schemas.Parquet.feature_vector)
 
-    def run(self):
-        chunk = []
-        temp_folder = tempfile.TemporaryDirectory()
-        for i, data in enumerate(self.input_files):
-            problem_id, mzn_fqn = data
+    @staticmethod
+    def worker(queue, tempfolder, problem_id: str, mzn_fqn: Path):
+        with FeatureVectorExtractor.semaphore:
             mzn_filename = mzn_fqn.as_posix().split("/")[-1]
             raw_filename = mzn_filename.rstrip(".mzn")
-            fznfile_fqn = f"{temp_folder.name}/{raw_filename}.fzn"
-            args = f' --two-pass --feature-vector --no-output-ozn --output-fzn-to-file {fznfile_fqn} "{mzn_fqn}" --json-stream --compile'
+            fznfile_fqn = f"{tempfolder.name}/{raw_filename}.fzn"
+
+            print(f"starting work on {raw_filename}")
+
+            args = f' --two-pass --feature-vector 70v150cf --no-output-ozn --output-fzn-to-file {fznfile_fqn} "{mzn_fqn}" --json-stream --compile'
             ret_code, output_lines = MinizincWrapper.run(args)
 
             if ret_code != 0:
@@ -40,8 +45,29 @@ class FeatureVectorExtractor:
                 data[Constants.MODEL_NAME] = mzn_filename
                 data[Constants.FLAT_ZINC] = f.read()
 
-            chunk.append(data)
+            queue.put(data)
+            print(f"{raw_filename} feature extraction is done.")
 
+    def run(self):
+        queue = multiprocessing.Queue()
+        temp_folder = tempfile.TemporaryDirectory()
+
+        threads = []
+        for problem_id, data in self.input_files:
+            t = threading.Thread(target=FeatureVectorExtractor.worker, args=(queue, temp_folder, problem_id, data))
+            t.start()
+            threads.append(t)
+
+        chunk = []
+        processed = 0
+        while processed < len(self.input_files):
+            processed += 1
+            chunk.append(queue.get())
+
+        for t in threads:
+            t.join()
+
+        print("Will flush table.")
         table = pa.Table.from_pylist(mapping=chunk, schema=Schemas.Parquet.feature_vector)
         self.writer.write_table(table)
         self.writer.close()
@@ -62,3 +88,9 @@ class FeatureVectorExtractor:
 
         return file_list
 
+if __name__ == "__main__":
+    inp_p = Path("D:/Downloads/Problems").resolve()
+    inp = FeatureVectorExtractor.input_format_helper(inp_p)
+    out_p = Path("F:/Local/python/bt_csp_dataset/scripts/temp/vector_big_2.parquet").resolve()
+    fve = FeatureVectorExtractor(input_files=inp, parquet_output_file=out_p)
+    fve.run()
