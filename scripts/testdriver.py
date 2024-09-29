@@ -6,19 +6,16 @@ import multiprocessing
 import os
 import queue
 import sys
-import tempfile
 import threading
 import time
 import zipfile
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Dict
 
 import duckdb
 import pyarrow.parquet as pq
 import pyarrow as pa
-import shutil
 
 from instance_generator import FlatZincInstanceGenerator
 from minizinc_wrapper import MinizincWrapper
@@ -28,9 +25,9 @@ from schemas import Helpers, Schemas, Constants
 class Testdriver:
 
     command_template = ' --solver gecode --json-stream --solver-statistics --input-from-stdin --input-is-flatzinc'
-    job_loading_threshold = 50 #10_000
-    backup_threshold = 100000 #5_000_000
-    result_parquet_chunksize = 1000 #10_000
+    job_loading_threshold = 10_000
+    backup_threshold = 5_000_000
+    result_parquet_chunksize = 100_000
     num_workers = multiprocessing.cpu_count()
 
     def __init__(self, feature_vector_parquet: Path, workload_parquet_folder: Path, output_folder: Path, log_path: Path, backup_path: Path):
@@ -56,8 +53,9 @@ class Testdriver:
         # determine starting point of the job_counter
         # job counter will be minimal job id that is not already worked on
         output_file_pattern = f'{output_folder}/**/*.parquet'
+        self.job_counter = 0
         if glob.glob(output_file_pattern):
-            self.job_counter = self.con.execute(
+            self.job_offset = self.con.execute(
                 f"""
                 SELECT MIN(w.{Constants.ID})
                 FROM {self.job_view} w
@@ -66,7 +64,7 @@ class Testdriver:
                 WHERE r.{Constants.ID} IS NULL
                 """).fetchone()[0]
         else:
-            self.job_counter = self.con.execute(
+            self.job_offset = self.con.execute(
                 f"""
                     SELECT MIN({Constants.ID})
                     FROM {self.job_view}
@@ -171,10 +169,10 @@ class Testdriver:
         while self.job_counter < self.job_count and loaded_in_this_batch < Testdriver.job_loading_threshold:
 
             jobs = self.con.execute(f"""
-                SELECT * FROM {self.job_view}
-                WHERE {Constants.ID} >= {self.job_counter}
-                AND {Constants.ID} < {self.job_counter + Testdriver.job_loading_threshold}
-                """).arrow().to_pylist()
+                            SELECT * FROM {self.job_view}
+                            WHERE {Constants.ID} >= {self.job_counter + self.job_offset}
+                            AND {Constants.ID} < {self.job_counter + self.job_offset + Testdriver.job_loading_threshold}
+                            """).arrow().to_pylist()
 
             loaded_in_this_batch += len(jobs)
             for job in jobs:

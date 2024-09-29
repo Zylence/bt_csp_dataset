@@ -73,9 +73,7 @@ class FlatZincInstanceGenerator:
             variables = FlatZincInstanceGenerator.extract_variables(fzn_content)
             if len(variables) == 0:
                 raise Exception(f"No variables could be extracted from {problem_id} with flatzinc {fzn_content}")
-            elif len(variables) > self.max_vars:
-                print(f"WARN: SKIPPING {problem_id} because it has too many deciding variables {len(variables)}")
-                continue
+
             print(f"INF: Generating {math.factorial(len(variables))} permutations for {problem_id}")
 
             orderings = self.generate_permutations(variables)
@@ -229,5 +227,5 @@ class FlatZincInstanceGenerator:
         return FlatZincInstanceGenerator.int_search_pattern_extended.sub(rf"\1\2,{'input_order'},\4", fzn_content.replace("\n", ""))
 
 if __name__ == "__main__":
-    generator = FlatZincInstanceGenerator(Path("temp/vector.parquet").resolve(), Path("instances").resolve(), 100)
+    generator = FlatZincInstanceGenerator(Path("temp/vector_big_2.parquet").resolve(), Path("instances").resolve(), 100)
     generator.run()
