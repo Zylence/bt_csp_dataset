@@ -2,7 +2,7 @@ import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
 
-file_path = '../temp/vector_big_5.parquet'
+file_path = '../temp/vector_big_10.parquet'
 df = pd.read_parquet(file_path)
 
 numeric_df = df.select_dtypes(include=['number'])
