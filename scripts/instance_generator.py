@@ -1,7 +1,8 @@
 import math
 import multiprocessing
+import sys
 from pathlib import Path
-from typing import Dict
+from typing import Dict, List, Tuple
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -10,6 +11,7 @@ import re
 from minizinc_wrapper import MinizincWrapper
 from schemas import Constants, Schemas
 
+sys.set_int_max_str_digits(20000)  # in case we have large models with more than 1000 vars
 
 class FlatZincInstanceGenerator:
     int_search_pattern = re.compile(r"solve\s*::\s*int_search\s*\(\s*(\[\s*.*?\s*\]|\w+)\s*,", re.DOTALL)
@@ -21,18 +23,19 @@ class FlatZincInstanceGenerator:
     result_buffer_size = 100_000
 
     factorials = {}
-    for i in range(0, 1000):
+    for i in range(0, 5000):
         factorials[i] = math.factorial(i)
 
-    def __init__(self, feature_vector_parquet_input_file: Path, instances_parquet_output: Path, targeted_vars: int, cutoff_excess: bool = False):
+    def __init__(self, feature_vector_parquet_input_file: Path, instances_parquet_output: Path, max_perms: int, cutoff_excess: bool = False):
         self.reader = pq.ParquetReader()
         self.reader.open(feature_vector_parquet_input_file)
         self.output_folder = instances_parquet_output
-        self.max_vars = targeted_vars   # amount of vars aimed at. If its required to constrain to this exact amount set cutoff_excess
+        self.max_permutations = max_perms   # amount of permutations aimed at. If its required to constrain to this exact amount set cutoff_excess
         self.cutoff_excess_vars = cutoff_excess
 
     def probe(self):
-        rows = self.reader.read_all().select([Constants.MODEL_NAME, Constants.FLAT_ZINC]).to_pylist()
+        rows = self.reader.read_all().to_pylist()
+        rows.sort(key=lambda x: int(x[Constants.PROBLEM_ID]))
         for row in rows:
             print(f"Probing {row[Constants.MODEL_NAME]}")
             variables = FlatZincInstanceGenerator.extract_variables(row[Constants.FLAT_ZINC])
@@ -49,15 +52,18 @@ class FlatZincInstanceGenerator:
             if not "input_order" in new_zinc:
                 raise Exception("FlatZinc does not use input ordering.")
 
+            if len(re.findall(FlatZincInstanceGenerator.int_search_pattern, new_zinc)) != 1:
+                raise Exception("We can only handle one int_search annotation, but we found multiple.")
+
             code, stdout = MinizincWrapper.run(FlatZincInstanceGenerator.command_template, stdin=new_zinc)
             if code != 0:
                 # file will not be deleted if that trows, this is intentional
-                print(f"WARN Variable substitution failed")
+                raise Exception(f"Variable substitution failed")
 
             new_var_ordering_extracted = FlatZincInstanceGenerator.extract_variables(new_zinc)
 
             if new_var_ordering_extracted != new_var_ordering:
-                print(f"WARN Instance generation sanity check failed")
+                raise Exception(f"Instance generation sanity check failed")
             else:
                 print(f"Instance generation successful for {row[Constants.MODEL_NAME]}")
 
@@ -73,16 +79,18 @@ class FlatZincInstanceGenerator:
             variables = FlatZincInstanceGenerator.extract_variables(fzn_content)
             if len(variables) == 0:
                 raise Exception(f"No variables could be extracted from {problem_id} with flatzinc {fzn_content}")
-
-            print(f"INF: Generating {math.factorial(len(variables))} permutations for {problem_id}")
+            print(f"INF: There are {math.factorial(len(variables))} permutations for {problem_id}")
+            print(f"Extracted variables {variables}")
 
             orderings = self.generate_permutations(variables)
-            for num, ordering in enumerate(orderings):
+            for num, res in enumerate(orderings):
+                perm_id, ordering = res
                 ordering_lst = list(ordering)
 
                 buffer.append({
                     Constants.MODEL_NAME: problem_id,
                     Constants.ID: id,
+                    Constants.PERMUTATION_ID: perm_id,
                     Constants.INSTANCE_PERMUTATION: ordering_lst,
                 })
                 id += 1
@@ -158,13 +166,13 @@ class FlatZincInstanceGenerator:
         result_list = []
         for perm_position in range(start, stop, step):
             nth_permutation = FlatZincInstanceGenerator.generate_nth_permutation(vars, perm_position)
-            result_list.append(nth_permutation)
+            result_list.append((str(perm_position), nth_permutation))
         queue.put((start, result_list))
 
-    def generate_permutations(self, variables):
+    def generate_permutations(self, variables) -> List[Tuple[str, List[str]]]:
         perm_count = FlatZincInstanceGenerator.factorials[len(variables)]
-        num_computable_perms = min(self.max_vars, perm_count)
-        workers = min(multiprocessing.cpu_count() - 1, self.max_vars)
+        num_computable_perms = min(self.max_permutations, perm_count)
+        workers = min(multiprocessing.cpu_count() - 1, self.max_permutations)
         chunk_size = perm_count // workers
         stepsize = perm_count // num_computable_perms
         queue = multiprocessing.Queue()
@@ -193,7 +201,7 @@ class FlatZincInstanceGenerator:
         result_list = [None] * num_computable_perms
         processed = 0
         while processed < workers:
-            start, chunk = queue.get()
+            start, chunk = queue.get()  # chunk = (perm_position, [perm])
             start_index = start // stepsize
             result_list[start_index:start_index + len(chunk)] = chunk
             processed += 1
@@ -227,5 +235,5 @@ class FlatZincInstanceGenerator:
         return FlatZincInstanceGenerator.int_search_pattern_extended.sub(rf"\1\2,{'input_order'},\4", fzn_content.replace("\n", ""))
 
 if __name__ == "__main__":
-    generator = FlatZincInstanceGenerator(Path("temp/vector_big_2.parquet").resolve(), Path("instances").resolve(), 100)
+    generator = FlatZincInstanceGenerator(Path("temp/vectors_big_10.parquet").resolve(), Path("instances.10000_vm").resolve(), 10000)
     generator.run()

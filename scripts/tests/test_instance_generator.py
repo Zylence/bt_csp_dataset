@@ -20,7 +20,7 @@ class TestFlatZincInstanceGenerator(unittest.TestCase):
         self.generator = FlatZincInstanceGenerator(
             feature_vector_parquet_input_file=input_file,
             instances_parquet_output=self.output_path,
-            targeted_vars=10
+            max_perms=10
         )
 
     def tearDown(self):
@@ -45,7 +45,7 @@ class TestFlatZincInstanceGenerator(unittest.TestCase):
         expected_permutations = [['x', 'y'], ['y', 'x']]
 
         actual_permutations = self.generator.generate_permutations(variables)
-        self.assertEqual(expected_permutations, actual_permutations)
+        self.assertEqual(expected_permutations, [perm for id_, perm in actual_permutations])
 
 
     @staticmethod
@@ -78,10 +78,10 @@ class TestFlatZincInstanceGenerator(unittest.TestCase):
             variables.sort()
             expected_permutations = TestFlatZincInstanceGenerator.nt_permutation_itertools_helper(variables, max_vars)
             with self.subTest(variables=variables):
-                self.generator.max_vars = max_vars
+                self.generator.max_permutations = max_vars
                 actual_vars = self.generator.generate_permutations(variables)
                 for av, ev in zip(actual_vars, expected_permutations):
-                    self.assertEqual(av, ev)
+                    self.assertEqual(av[1], ev)
 
     def test_permutation_generation_with_large_values(self):
         """
@@ -96,10 +96,10 @@ class TestFlatZincInstanceGenerator(unittest.TestCase):
 
         for variables, max_vars in test_cases:
             with self.subTest(variables=variables):
-                self.generator.max_vars = max_vars
+                self.generator.max_permutations = max_vars
                 actual_vars = self.generator.generate_permutations(variables)
                 self.assertEqual(len(actual_vars), max_vars)
-                self.assertEqual(variables, actual_vars[0])
+                self.assertEqual(variables, actual_vars[0][1])
 
     def test_search_annoation_substitution(self):
         test_cases = [
@@ -129,7 +129,6 @@ class TestFlatZincInstanceGenerator(unittest.TestCase):
                 self.assertEqual(expected_content, actual_content)
 
 
-
     def test_run(self):
 
         self.generator.run()
@@ -145,7 +144,7 @@ class TestFlatZincInstanceGenerator(unittest.TestCase):
         for row in col:
             self.assertEqual(len(row.as_py()), entry_length, "Invalid Permutations")
 
-        expected_row_count = math.factorial(entry_length)
+        expected_row_count = self.generator.max_permutations
         self.assertEqual(table.num_rows, expected_row_count, "Expected Permutation count differs")
 
 if __name__ == '__main__':
