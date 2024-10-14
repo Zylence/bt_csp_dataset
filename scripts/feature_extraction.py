@@ -17,6 +17,9 @@ a parquet file.
 class FeatureVectorExtractor:
 
     semaphore = threading.Semaphore(multiprocessing.cpu_count())
+    command_template = ' --solver cp --two-pass --feature-vector --no-output-ozn --output-fzn-to-file {fznfile} "{mzn}" --json-stream --compile'
+    # command_template = ' --solver api --two-pass --feature-vector --no-output-ozn --output-fzn-to-file {fznfile} "{mzn}" --json-stream --compile'
+    # command_template = ' --solver gecode --two-pass --feature-vector --no-output-ozn --output-fzn-to-file {fznfile} "{mzn}" --json-stream --compile'
 
     def __init__(self, input_files: (str, list[Path]), parquet_output_file: Path):
         self.input_files = input_files
@@ -31,14 +34,16 @@ class FeatureVectorExtractor:
             fznfile_fqn = f"{tempfolder.name}/{raw_filename}.fzn"
 
             print(f"starting work on {raw_filename}")
-
-            args = f' --two-pass --feature-vector 70v150cf --no-output-ozn --output-fzn-to-file {fznfile_fqn} "{mzn_fqn}" --json-stream --compile'
+            args = FeatureVectorExtractor.command_template.format(fznfile=fznfile_fqn, mzn=mzn_fqn)
             ret_code, output_lines = MinizincWrapper.run(args)
 
             if ret_code != 0:
                 raise Exception(f"Feature Extraction failed for file {fznfile_fqn}.")
 
             data = Helpers.json_to_normalized_feature_vector_dict("\n".join(output_lines))
+
+            with open(mzn_fqn, 'r') as f:
+                data[Constants.MINI_ZINC] = f.read()
 
             with open(fznfile_fqn, 'r') as f:
                 data[Constants.PROBLEM_ID] = problem_id
@@ -67,6 +72,11 @@ class FeatureVectorExtractor:
         for t in threads:
             t.join()
 
+        def sort_by_problem_id(vektor):
+            return int(vektor[Constants.PROBLEM_ID])
+
+        chunk.sort(key=sort_by_problem_id)
+
         print("Will flush table.")
         table = pa.Table.from_pylist(mapping=chunk, schema=Schemas.Parquet.feature_vector)
         self.writer.write_table(table)
@@ -89,8 +99,9 @@ class FeatureVectorExtractor:
         return file_list
 
 if __name__ == "__main__":
-    inp_p = Path("D:/Downloads/Problems").resolve()
+    inp_p = Path("F:/Downloads/Problems_2").resolve()
     inp = FeatureVectorExtractor.input_format_helper(inp_p)
-    out_p = Path("F:/Local/python/bt_csp_dataset/scripts/temp/vector_big_2.parquet").resolve()
+    out_p = Path("D:/Local/projects/python/ba_csp_dataset/scripts/temp/vector_big_10.parquet").resolve()
     fve = FeatureVectorExtractor(input_files=inp, parquet_output_file=out_p)
     fve.run()
+
