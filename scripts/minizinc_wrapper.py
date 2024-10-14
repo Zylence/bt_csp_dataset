@@ -17,6 +17,7 @@ class MinizincWrapper:
                                 text=True,
                                 input=stdin,
                                 cwd=MinizincWrapper.minizinc_executable.parent,
+                                check=True,
                                 capture_output=True,
         )
 

@@ -14,7 +14,7 @@ if __name__ == '__main__':
                            help='Input Parquet file for feature vectors')
     parser_fz.add_argument('-o', '--instances_parquet_output', type=Path, required=True,
                            help='Output folder for instances Parquet files')
-    parser_fz.add_argument('-t', '--targeted_vars', type=int, required=True, help='Number of targeted variables')
+    parser_fz.add_argument('-t', '--max_perms', type=int, required=True, help='Maximum number of permutations to compute per problem')
     parser_fz.add_argument('-c', '--cutoff_excess', action='store_true', help='Cut off excess variables', default=False)
 
     # Testdriver command with short options
@@ -56,7 +56,7 @@ if __name__ == '__main__':
         generator = FlatZincInstanceGenerator(
             feature_vector_parquet_input_file=args.feature_vector_parquet_input_file,
             instances_parquet_output=args.instances_parquet_output,
-            targeted_vars=args.targeted_vars,
+            max_perms=args.targeted_vars,
             cutoff_excess=args.cutoff_excess
         )
         generator.run()
