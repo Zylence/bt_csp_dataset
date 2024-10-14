@@ -25,10 +25,10 @@ from schemas import Helpers, Schemas, Constants
 class Testdriver:
 
     command_template = ' --solver gecode --json-stream --solver-statistics --input-from-stdin --input-is-flatzinc'
-    job_loading_threshold = 10_000
-    backup_threshold = 5_000_000
-    result_parquet_chunksize = 100_000
-    num_workers = multiprocessing.cpu_count()
+    job_loading_threshold = 5000 #10_000
+    backup_threshold = 1000000 #5_000_000
+    result_parquet_chunksize = 5000 #10_000
+    num_workers = multiprocessing.cpu_count() - 2
 
     def __init__(self, feature_vector_parquet: Path, workload_parquet_folder: Path, output_folder: Path, log_path: Path, backup_path: Path):
         self.output_folder = output_folder
@@ -142,6 +142,7 @@ class Testdriver:
                     data[Constants.INSTANCE_PERMUTATION] = job[Constants.INSTANCE_PERMUTATION]
                     data[Constants.MODEL_NAME] = job[Constants.MODEL_NAME]
                     data[Constants.ID] = job_num
+                    data[Constants.PERMUTATION_ID] = job[Constants.PERMUTATION_ID]
 
                     logger.log(logging.INFO, job_num, f"Backtracks: {data[Constants.FAILURES]}, SolveTime: {data[Constants.SOLVE_TIME]}", job[Constants.MODEL_NAME])
 
@@ -181,7 +182,7 @@ class Testdriver:
 
         logger.log(logging.DEBUG, 0, f"Attempted loading new Jobs. New QSize {self.job_queue.qsize()}")
 
-    def probe(self, logger: JobLogger):
+    def probe(self, logger: JobLogger, samples_per_problem=5):
         """
         Samples the jobs and executes one of each problem.
         Collects timing information for estimations.
@@ -189,34 +190,58 @@ class Testdriver:
         :param logger: logger of the caller
         """
         # ov every problem fetch one row (one instance)
-        problem_samples = self.con.execute(
-            f"""SELECT 
-            DISTINCT ON({Constants.MODEL_NAME}) {Constants.MODEL_NAME}, {Constants.ID}, {Constants.INSTANCE_PERMUTATION} 
-            FROM {self.job_view}""")
+        min_max = self.con.execute(
+            f"""SELECT
+            MIN({Constants.ID}) as min_id, MAX({Constants.ID}) as max_id
+            FROM {self.job_view}
+            GROUP BY {Constants.MODEL_NAME}
+            """)
 
-        probe_rows = problem_samples.arrow().to_pylist()
+        probe_rows = {}
+        for d in min_max.arrow().to_pylist():
+            min_ = d["min_id"]
+            max_ = d["max_id"]
+
+            if max_ - min_ < samples_per_problem:
+                # not work probing
+                break
+
+            search = list(range(min_, max_, (max_ - min_) // samples_per_problem))
+
+            for v in search:
+                r = self.con.execute(f"""
+                SELECT *
+                FROM {self.job_view}
+                WHERE {Constants.ID} = {v}
+                """).arrow().to_pylist()[0]
+                probe_rows.setdefault(r[Constants.MODEL_NAME], []).append(r)
+
         result_queue = queue.Queue()
         job_queue = queue.Queue()
         timings = {}
-        for row in probe_rows:
+        for problem, samples in probe_rows.items():
             start = time.time()
 
-            logger.log(logging.INFO, 0, f"Probing Preparation", row[Constants.MODEL_NAME])
-            job_queue.put_nowait(row)
-            self.worker(job_queue, result_queue, self.feature_vectors, logger, 0)
-            _ = result_queue.get_nowait()
+            logger.log(logging.INFO, 0, f"Probing Preparation", problem)
 
-            indiv_t = time.time() - start
-            logger.log(logging.INFO, 0, f"Probing 1 Job took {indiv_t}s", row[Constants.MODEL_NAME])
+            for sample in samples:
+                job_queue.put_nowait(sample)
+                if problem == "magic_sequence4.mzn":
+                    print(self.feature_vectors[problem][Constants.FLAT_ZINC])
+                self.worker(job_queue, result_queue, self.feature_vectors, logger, 0)
+                _ = result_queue.get_nowait()
+
+            indiv_t = (time.time() - start) / len(samples)
+            logger.log(logging.INFO, 0, f"Probing 1 Job took {indiv_t}s per sample", problem)
 
             # get the number of jobs for this problem
             problem_count = self.con.execute(f"""
                 SELECT COUNT(*)
                 FROM {self.job_view}
-                WHERE {Constants.MODEL_NAME} = '{row[Constants.MODEL_NAME]}'
+                WHERE {Constants.MODEL_NAME} = '{problem}'
             """).arrow().to_pydict()["count_star()"][0]
 
-            timings[row[Constants.MODEL_NAME]] = (indiv_t, problem_count)
+            timings[problem] = (indiv_t, problem_count)
 
         total_t = sum([i for i, _ in timings.values()])
         logger.log(logging.INFO, 0, f"Probing {len(probe_rows)} Jobs took {total_t}s")
@@ -322,9 +347,9 @@ class Testdriver:
 
 
 if __name__ == "__main__":
-    feature_vector_parquet = Path("temp/vector_big_2.parquet")
-    workload_parquet = Path("instances").resolve()
-    result_parquet = Path(f"result").resolve()
+    feature_vector_parquet = Path("temp/vectors_big_10.parquet")
+    workload_parquet = Path("instances.10000_vm").resolve()
+    result_parquet = Path(f"result.10000_vm").resolve()
     backups = Path(f"backups").resolve()
     testdriver = Testdriver(
         feature_vector_parquet=feature_vector_parquet,
