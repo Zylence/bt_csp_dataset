@@ -160,3 +160,16 @@ cython_debug/
 #  and can be added to the global gitignore or merged into this file.  For a more nuclear
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
+
+
+# project
+scripts/misc/bitmaps_output/
+scripts/misc/correlation_matrix.svg
+scripts/misc/correlation_matrix_extended.svg
+scripts/misc/backtracks/
+scripts/misc/scatterplots_versus.svg
+scripts/misc/aggregated_constraint_histogram.svg
+scripts/misc/score_diagram.svg
+scripts/misc/histograms/
+scripts/misc/min_max/
+scripts/temp/
