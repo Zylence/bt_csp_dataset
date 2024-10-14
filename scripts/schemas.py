@@ -28,6 +28,8 @@ class Constants:
     ANNOTATION_HISTOGRAM = "annotationHistogram"
     METHOD = "method"
     FLAT_ZINC = "flatZinc"
+    MINI_ZINC = "miniZinc"
+    DATA_FILE = "dataFile"
 
     ####
     INSTANCE_RESULTS = "instanceResults"
@@ -35,6 +37,7 @@ class Constants:
     OUTPUT_TYPE = "type"
     SOLVER_STATISTICS = "statistics"
     INSTANCE_PERMUTATION = "instancePermutation"
+    PERMUTATION_ID = "permutationId"  # lexicographic
     ID = "id"  #unique
 
     INIT_TIME = "initTime"
@@ -73,36 +76,36 @@ class Schemas:
             pa.field(Constants.ANNOTATION_HISTOGRAM, pa.map_(pa.string(), pa.int32(), True), False),
             pa.field(Constants.METHOD, pa.string(), False),
             pa.field(Constants.FLAT_ZINC, pa.string(), False),
+            pa.field(Constants.MINI_ZINC, pa.string(), False),
         ])
 
-        __irs = [
-            pa.field(Constants.MODEL_NAME, pa.string(), nullable=False),
-            pa.field(Constants.ID, pa.int64(), nullable=False),
-            pa.field(Constants.INSTANCE_PERMUTATION, pa.list_(pa.string()), nullable=False),
-            pa.field(Constants.INIT_TIME, pa.float64(), nullable=False),
-            pa.field(Constants.SOLVE_TIME, pa.float64(), nullable=False),
-            pa.field(Constants.SOLUTIONS, pa.int64(), nullable=False),
-            pa.field(Constants.VARIABLES, pa.int64(), nullable=False),
-            pa.field(Constants.PROPAGATORS, pa.int64(), nullable=False),
-            pa.field(Constants.PROPAGATIONS, pa.int64(), nullable=False),
-            pa.field(Constants.NODES, pa.int64(), nullable=False),
-            pa.field(Constants.FAILURES, pa.int64(), nullable=False),
-            pa.field(Constants.RESTARTS, pa.int64(), nullable=False),
-            pa.field(Constants.PEAK_DEPTH, pa.int64(), nullable=False),
-        ]
-
-        # struct
-        instance_result: pa.DataType = pa.struct(__irs)
+        feature_vector_with_dzn = feature_vector.append(pa.field(Constants.DATA_FILE, pa.string(), False))
 
         # schema
         instance_results: pa.Schema = pa.schema(
-            __irs
+            [
+                pa.field(Constants.MODEL_NAME, pa.string(), nullable=False),
+                pa.field(Constants.ID, pa.int64(), nullable=False),
+                pa.field(Constants.PERMUTATION_ID, pa.string(), nullable=False),
+                pa.field(Constants.INSTANCE_PERMUTATION, pa.list_(pa.string()), nullable=False),
+                pa.field(Constants.INIT_TIME, pa.float64(), nullable=False),
+                pa.field(Constants.SOLVE_TIME, pa.float64(), nullable=False),
+                pa.field(Constants.SOLUTIONS, pa.int64(), nullable=False),
+                pa.field(Constants.VARIABLES, pa.int64(), nullable=False),
+                pa.field(Constants.PROPAGATORS, pa.int64(), nullable=False),
+                pa.field(Constants.PROPAGATIONS, pa.int64(), nullable=False),
+                pa.field(Constants.NODES, pa.int64(), nullable=False),
+                pa.field(Constants.FAILURES, pa.int64(), nullable=False),
+                pa.field(Constants.RESTARTS, pa.int64(), nullable=False),
+                pa.field(Constants.PEAK_DEPTH, pa.int64(), nullable=False),
+            ]
         )
 
         instances: pa.Schema = pa.schema(
             [
                 pa.field(Constants.MODEL_NAME, pa.string(), False),
                 pa.field(Constants.ID, pa.int64(), False),
+                pa.field(Constants.PERMUTATION_ID, pa.string(), False),
                 pa.field(Constants.INSTANCE_PERMUTATION, pa.list_(pa.string()), False),
             ]
         )
